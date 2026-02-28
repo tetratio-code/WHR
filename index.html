@@ -1,462 +1,153 @@
 <!doctype html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Elo rating 折線圖</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Elo rating 折線圖</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 
-  <!-- D3 (charting) -->
-  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-
-  <!-- DuckDB-WASM (efficiently query wide CSV without loading every column into JS) -->
-  <script type="module">
-    import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/+esm";
-
-    // ---- Config ----
-    const CSV_PATH = "./whr_output_wide.csv"; // put the CSV next to this HTML on GitHub Pages
-    const DEFAULT_PLAYERS = ['178', '299', '300', '488', '578', '603', '698', '700', '3024', '4011', '4014', '4043', '4097', '5537', '5568', '5577', '10027', '10104', '10851', '11348', '13168'];
-
-    // ---- Basic UI state ----
-    const state = {
-      players: new Set(DEFAULT_PLAYERS),
-      dataByPlayer: new Map(), // playerId -> Array<{date: Date, value: number}>
-      loaded: false,
-    };
-
-    // ---- DOM helpers ----
-    const $ = (sel) => document.querySelector(sel);
-    const statusEl = $("#status");
-    const playerListEl = $("#playerList");
-    const addInputEl = $("#addInput");
-    const addBtnEl = $("#addBtn");
-
-    // ---- Chart dimensions ----
-    const margin = { top: 20, right: 20, bottom: 40, left: 60 };
-    const width = 1000;
-    const height = 520;
-
-    const svg = d3.select("#chart")
-      .append("svg")
-      .attr("viewBox", `0 0 ${width} ${height}`)
-      .attr("role", "img")
-      .attr("aria-label", "Elo rating 隨時間變化折線圖");
-
-    const g = svg.append("g");
-    const gPlot = g.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
-    const innerW = width - margin.left - margin.right;
-    const innerH = height - margin.top - margin.bottom;
-
-    const x = d3.scaleTime().range([0, innerW]);
-    const y = d3.scaleLinear().range([innerH, 0]);
-    const color = d3.scaleOrdinal(d3.schemeTableau10);
-
-    const xAxisG = gPlot.append("g").attr("transform", `translate(0,${innerH})`);
-    const yAxisG = gPlot.append("g");
-
-    gPlot.append("text")
-      .attr("x", 0)
-      .attr("y", -6)
-      .attr("font-size", 12)
-      .attr("fill", "#444")
-      .text("Elo rating");
-
-    // Tooltip
-    const tooltip = d3.select("#tooltip");
-    const vLine = gPlot.append("line")
-      .attr("y1", 0)
-      .attr("y2", innerH)
-      .attr("stroke", "#999")
-      .attr("stroke-dasharray", "3,3")
-      .attr("opacity", 0);
-
-    // A transparent overlay for pointer events
-    const overlay = gPlot.append("rect")
-      .attr("width", innerW)
-      .attr("height", innerH)
-      .attr("fill", "transparent");
-
-    // ---- DuckDB init ----
-    async function initDuckDB() {
-      statusEl.textContent = "載入 DuckDB…";
-      const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
-      const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
-
-      const worker = new Worker(bundle.mainWorker);
-      const logger = new duckdb.ConsoleLogger();
-      const db = new duckdb.AsyncDuckDB(logger, worker);
-      await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-
-      statusEl.textContent = "下載 CSV…";
-      const resp = await fetch(CSV_PATH);
-      if (!resp.ok) throw new Error(`無法讀取 CSV：${resp.status} ${resp.statusText}`);
-      const buf = new Uint8Array(await resp.arrayBuffer());
-      await db.registerFileBuffer("whr_output_wide.csv", buf);
-
-      const conn = await db.connect();
-      // Force first column 'date' to be read as DATE if possible; keep others as DOUBLE (DuckDB will infer)
-      // We'll always explicitly select needed columns, so reading is column-pruned.
-      return { db, conn };
-    }
-
-    let conn;
-
-    function quoteIdent(id) {
-      // Column names are numeric; DuckDB requires quoting
-      return `"${String(id).replaceAll('"', '""')}"`;
-    }
-
-    async function loadPlayers(playerIds) {
-      if (!conn) throw new Error("DuckDB 尚未初始化");
-      const ids = Array.from(playerIds);
-
-      // Build SELECT list: date + each requested player column
-      const selectCols = ["date"].concat(ids.map(id => `${quoteIdent(id)} AS p_${id}`)).join(", ");
-
-      const sql = `
-        SELECT ${selectCols}
-        FROM read_csv_auto('whr_output_wide.csv', header=true)
-        ORDER BY date
-      `;
-
-      statusEl.textContent = `讀取選手資料（${ids.length} 條線）…`;
-      const res = await conn.query(sql);
-      const rows = res.toArray();
-
-      // Convert to per-player series
-      for (const id of ids) {
-        const key = `p_${id}`;
-        const series = [];
-        for (const r of rows) {
-          const v = r[key];
-          if (v === null || v === undefined || Number.isNaN(v)) continue;
-          // r.date may be Date or string depending on DuckDB; normalize:
-          const d = (r.date instanceof Date) ? r.date : new Date(r.date);
-          series.push({ date: d, value: Number(v) });
-        }
-        state.dataByPlayer.set(id, series);
-      }
-    }
-
-    function renderPlayerChips() {
-      playerListEl.innerHTML = "";
-      const ids = Array.from(state.players).sort((a,b)=>Number(a)-Number(b));
-      for (const id of ids) {
-        const chip = document.createElement("span");
-        chip.className = "chip";
-        chip.textContent = id;
-
-        const btn = document.createElement("button");
-        btn.className = "chip-x";
-        btn.title = "移除";
-        btn.textContent = "×";
-        btn.addEventListener("click", async () => {
-          state.players.delete(id);
-          state.dataByPlayer.delete(id);
-          renderPlayerChips();
-          draw();
-        });
-
-        chip.appendChild(btn);
-        playerListEl.appendChild(chip);
-      }
-    }
-
-    function draw() {
-      const ids = Array.from(state.players);
-      const allPoints = ids.flatMap(id => state.dataByPlayer.get(id) || []);
-      if (allPoints.length === 0) {
-        statusEl.textContent = "沒有可繪製的資料。";
-        gPlot.selectAll(".series").remove();
-        return;
-      }
-
-      statusEl.textContent = state.loaded ? "完成" : "載入完成";
-      state.loaded = true;
-
-      x.domain(d3.extent(allPoints, d => d.date));
-      y.domain(d3.extent(allPoints, d => d.value)).nice();
-
-      xAxisG.call(d3.axisBottom(x).ticks(8));
-      yAxisG.call(d3.axisLeft(y));
-
-      color.domain(ids);
-
-      const line = d3.line()
-        .defined(d => d.value !== null && !Number.isNaN(d.value))
-        .x(d => x(d.date))
-        .y(d => y(d.value));
-
-      const seriesSel = gPlot.selectAll(".series")
-        .data(ids, d => d);
-
-      const seriesEnter = seriesSel.enter()
-        .append("g")
-        .attr("class", "series");
-
-      seriesEnter.append("path")
-        .attr("class", "line")
-        .attr("fill", "none")
-        .attr("stroke-width", 1.8)
-        .attr("stroke", d => color(d))
-        .attr("d", d => line(state.dataByPlayer.get(d) || []));
-
-      // A thicker invisible path for easier hover
-      seriesEnter.append("path")
-        .attr("class", "hit")
-        .attr("fill", "none")
-        .attr("stroke", "transparent")
-        .attr("stroke-width", 10)
-        .attr("d", d => line(state.dataByPlayer.get(d) || []))
-        .style("cursor", "crosshair");
-
-      seriesSel.select(".line")
-        .attr("stroke", d => color(d))
-        .attr("d", d => line(state.dataByPlayer.get(d) || []));
-
-      seriesSel.select(".hit")
-        .attr("d", d => line(state.dataByPlayer.get(d) || []));
-
-      seriesSel.exit().remove();
-
-      // Tooltip interactions
-      const bisect = d3.bisector(d => d.date).left;
-
-      function showTooltip(evt, playerId) {
-        const series = state.dataByPlayer.get(playerId) || [];
-        if (series.length === 0) return;
-
-        const [mx, my] = d3.pointer(evt, overlay.node());
-        const dateAt = x.invert(mx);
-        const i = bisect(series, dateAt, 1);
-        const a = series[i - 1];
-        const b = series[i];
-        const d = (!b || (dateAt - a.date < b.date - dateAt)) ? a : b;
-
-        vLine
-          .attr("x1", x(d.date))
-          .attr("x2", x(d.date))
-          .attr("opacity", 1);
-
-        tooltip
-          .style("opacity", 1)
-          .html(`
-            <div><b>選手</b>：${playerId}</div>
-            <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(d.date)}</div>
-            <div><b>Elo</b>：${d.value.toFixed(3)}</div>
-          `);
-
-        const chartRect = $("#chart").getBoundingClientRect();
-        tooltip
-          .style("left", `${evt.clientX - chartRect.left + 12}px`)
-          .style("top", `${evt.clientY - chartRect.top + 12}px`);
-      }
-
-      function hideTooltip() {
-        tooltip.style("opacity", 0);
-        vLine.attr("opacity", 0);
-      }
-
-      // Attach handlers to hit paths
-      gPlot.selectAll(".hit")
-        .on("mousemove", function(evt, playerId) { showTooltip(evt, playerId); })
-        .on("mouseenter", function(evt, playerId) { showTooltip(evt, playerId); })
-        .on("mouseleave", hideTooltip);
-
-      // Also hide when leaving overlay
-      overlay.on("mouseleave", hideTooltip);
-    }
-
-    async function addPlayerFromInput() {
-      const raw = addInputEl.value.trim();
-      if (!raw) return;
-      const id = raw.replace(/^p_/, "");
-      addInputEl.value = "";
-
-      if (state.players.has(id)) return;
-
-      // Load just this player column
-      try {
-        await loadPlayers([id]);
-        const series = state.dataByPlayer.get(id);
-        if (!series || series.length === 0) {
-          state.dataByPlayer.delete(id);
-          alert(`找不到選手 ${id} 的資料（或全為空值）。`);
-          return;
-        }
-        state.players.add(id);
-        renderPlayerChips();
-        draw();
-      } catch (e) {
-        console.error(e);
-        alert(`新增失敗：${e.message}`);
-      }
-    }
-
-    async function main() {
-      try {
-        const init = await initDuckDB();
-        conn = init.conn;
-
-        renderPlayerChips();
-        await loadPlayers(state.players);
-        draw();
-
-        addBtnEl.addEventListener("click", addPlayerFromInput);
-        addInputEl.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") addPlayerFromInput();
-        });
-      } catch (e) {
-        console.error(e);
-        statusEl.textContent = "載入失敗（請確認 CSV 與 HTML 同資料夾，並且檔名正確）";
-        $("#error").textContent = e?.message || String(e);
-        $("#errorWrap").style.display = "block";
-      }
-    }
-
-    main();
-  </script>
-
-  <style>
-    :root {
-      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", Arial, sans-serif;
-      color: #111;
-      background: #fff;
-    }
-    body {
-      margin: 18px;
-      line-height: 1.4;
-    }
-    h1 {
-      margin: 0 0 8px 0;
-      font-size: 20px;
-    }
-    .row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      margin: 10px 0 12px 0;
-    }
-    .panel {
-      border: 1px solid #e6e6e6;
-      border-radius: 12px;
-      padding: 12px 12px;
-      background: #fafafa;
-    }
-    #chart {
-      position: relative;
-      border: 1px solid #e6e6e6;
-      border-radius: 12px;
-      padding: 8px;
-      background: #fff;
-      overflow: hidden;
-    }
-    #tooltip {
-      position: absolute;
-      pointer-events: none;
-      opacity: 0;
-      background: rgba(255,255,255,0.95);
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      padding: 10px 12px;
-      font-size: 12px;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.08);
-      white-space: nowrap;
-    }
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      border: 1px solid #ddd;
-      border-radius: 999px;
-      background: #fff;
-      font-size: 13px;
-      margin: 4px 6px 0 0;
-    }
-    .chip-x {
-      border: none;
-      background: transparent;
-      font-size: 16px;
-      line-height: 1;
-      cursor: pointer;
-      color: #666;
-    }
-    input[type="text"] {
-      padding: 8px 10px;
-      border-radius: 10px;
-      border: 1px solid #d8d8d8;
-      width: 180px;
-      font-size: 14px;
-      background: #fff;
-    }
-    button {
-      padding: 8px 12px;
-      border-radius: 10px;
-      border: 1px solid #d0d0d0;
-      background: #fff;
-      cursor: pointer;
-      font-size: 14px;
-    }
-    button:hover {
-      background: #f3f3f3;
-    }
-    .muted {
-      color: #666;
-      font-size: 13px;
-    }
-    #errorWrap {
-      display: none;
-      margin-top: 10px;
-      border: 1px solid #f0c2c2;
-      background: #fff5f5;
-      color: #7a1f1f;
-      border-radius: 12px;
-      padding: 10px 12px;
-    }
-    #error {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      font-size: 12px;
-      white-space: pre-wrap;
-    }
-  </style>
+<style>
+body { font-family: system-ui; margin:20px; }
+#chart { border:1px solid #ddd; border-radius:10px; padding:10px; }
+#tooltip {
+  position:absolute;
+  background:white;
+  border:1px solid #ccc;
+  padding:8px;
+  border-radius:8px;
+  font-size:12px;
+  pointer-events:none;
+  opacity:0;
+}
+</style>
 </head>
 
 <body>
-  <h1>Elo rating 折線圖（GitHub Pages）</h1>
 
-  <div class="panel">
-    <div class="row">
-      <div>
-        <div class="muted">狀態：<span id="status">初始化…</span></div>
-        <div class="muted">CSV：<code>./whr_output_wide.csv</code></div>
-      </div>
+<h2>Elo rating 折線圖</h2>
 
-      <div style="flex:1"></div>
+<input id="playerInput" placeholder="輸入選手編號">
+<button onclick="addPlayer()">加入折線</button>
 
-      <div class="row" style="margin:0">
-        <label class="muted">新增選手編號：</label>
-        <input id="addInput" type="text" placeholder="例如：11348" />
-        <button id="addBtn" type="button">加入折線</button>
-      </div>
-    </div>
+<div id="chart"></div>
+<div id="tooltip"></div>
 
-    <div class="muted" style="margin-top:8px">目前顯示（點 × 可移除）：</div>
-    <div id="playerList"></div>
+<script>
+const defaultPlayers = [
+"178","299","300","488","578","603","698","700",
+"3024","4011","4014","4043","4097","5537",
+"5568","5577","10027","10104","10851",
+"11348","13168"
+];
 
-    <div id="errorWrap">
-      <div><b>錯誤</b>（常見原因：CSV 沒放同資料夾、或檔名不是 <code>whr_output_wide.csv</code>）</div>
-      <div id="error"></div>
-    </div>
-  </div>
+let selectedPlayers = new Set(defaultPlayers);
+let rawData;
+let svg, xScale, yScale, color;
 
-  <div id="chart" style="margin-top:12px">
-    <div id="tooltip"></div>
-  </div>
+const width = 1000;
+const height = 500;
+const margin = {top:20,right:20,bottom:40,left:60};
 
-  <div class="muted" style="margin-top:10px">
-    Hover 任一折線可顯示：選手編號、日期、Elo rating。<br/>
-    預設選手名單：在任一時間點曾為 Elo 最高的選手（已依附件 CSV 預先計算）。
-  </div>
+svg = d3.select("#chart")
+  .append("svg")
+  .attr("viewBox", `0 0 ${width} ${height}`);
+
+const plot = svg.append("g")
+  .attr("transform", `translate(${margin.left},${margin.top})`);
+
+xScale = d3.scaleTime().range([0, width-margin.left-margin.right]);
+yScale = d3.scaleLinear().range([height-margin.top-margin.bottom, 0]);
+color = d3.scaleOrdinal(d3.schemeTableau10);
+
+const tooltip = d3.select("#tooltip");
+
+d3.csv("whr_output_wide.csv").then(data => {
+
+  data.forEach(d => {
+    d.date = new Date(d.date);
+    for (let key in d) {
+      if (key !== "date") d[key] = +d[key];
+    }
+  });
+
+  rawData = data;
+  draw();
+
+});
+
+function draw() {
+
+  plot.selectAll("*").remove();
+
+  const players = Array.from(selectedPlayers);
+  const allPoints = [];
+
+  players.forEach(p => {
+    rawData.forEach(d => {
+      if (d[p] != null && !isNaN(d[p])) {
+        allPoints.push({date:d.date,value:d[p]});
+      }
+    });
+  });
+
+  xScale.domain(d3.extent(allPoints, d => d.date));
+  yScale.domain(d3.extent(allPoints, d => d.value)).nice();
+
+  plot.append("g")
+    .attr("transform", `translate(0,${height-margin.top-margin.bottom})`)
+    .call(d3.axisBottom(xScale));
+
+  plot.append("g")
+    .call(d3.axisLeft(yScale));
+
+  const line = d3.line()
+    .x(d => xScale(d.date))
+    .y(d => yScale(d.value));
+
+  players.forEach(p => {
+
+    const series = rawData
+      .filter(d => d[p] != null && !isNaN(d[p]))
+      .map(d => ({date:d.date,value:d[p]}));
+
+    plot.append("path")
+      .datum(series)
+      .attr("fill","none")
+      .attr("stroke",color(p))
+      .attr("stroke-width",1.8)
+      .attr("d",line)
+      .on("mousemove", (event) => {
+        const [mx] = d3.pointer(event);
+        const date = xScale.invert(mx);
+
+        const bisect = d3.bisector(d=>d.date).left;
+        const i = bisect(series,date,1);
+        const d0 = series[i-1];
+        const d1 = series[i];
+        const d = (!d1 || date-d0.date < d1.date-date) ? d0 : d1;
+
+        tooltip.style("opacity",1)
+          .html(`
+            選手: ${p}<br>
+            日期: ${d3.timeFormat("%Y-%m-%d")(d.date)}<br>
+            Elo: ${d.value.toFixed(3)}
+          `)
+          .style("left",event.pageX+10+"px")
+          .style("top",event.pageY+10+"px");
+      })
+      .on("mouseleave", () => tooltip.style("opacity",0));
+
+  });
+
+}
+
+function addPlayer(){
+  const val = document.getElementById("playerInput").value.trim();
+  if (!val) return;
+  selectedPlayers.add(val);
+  draw();
+}
+
+</script>
 </body>
 </html>
