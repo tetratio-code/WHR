@@ -12,8 +12,15 @@
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin: 8px 0; }
   #chart { border:1px solid #ddd; border-radius:12px; padding:10px; position:relative; overflow:hidden; }
   #tooltip{
-    position:absolute; background:white; border:1px solid #ccc; padding:8px 10px;
-    border-radius:10px; font-size:12px; pointer-events:none; opacity:0;
+    position:absolute;
+    z-index: 9999;
+    pointer-events:none;
+    opacity:0;
+    background:white;
+    border:1px solid #ccc;
+    padding:8px 10px;
+    border-radius:10px;
+    font-size:12px;
     box-shadow:0 6px 18px rgba(0,0,0,0.08);
     white-space:nowrap;
   }
@@ -243,6 +250,7 @@ function draw(){
       .attr("stroke-width", 10)
       .attr("d", line)
       .style("cursor","crosshair")
+      .style("pointer-events","stroke")   // ✅ 只有描邊可觸發 hover
       .on("mousemove", (event) => {
         const [mx] = d3.pointer(event, plot.node());
         const date = xScale.invert(mx);
