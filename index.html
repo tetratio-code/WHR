@@ -40,7 +40,7 @@
 </head>
 
 <body>
-<h1>Elo rating 折線圖</h1>
+<h1>Elo rating 折線圖v1.0</h1>
 
 <div class="panel">
   <div class="row">
@@ -180,6 +180,18 @@ function nearestDefinedPoint(series, targetDate){
   return best;
 }
 
+function findExactDatePoint(series, date){
+  // 把時間切到 YYYY-MM-DD 比對（避免時區小誤差）
+  const key = d3.timeFormat("%Y-%m-%d")(date);
+  // series 是照日期排序的，這裡簡單線性找；資料量不大（只畫幾條）夠用
+  for (let i = 0; i < series.length; i++){
+    const d = series[i];
+    if (d.value == null) continue;
+    if (d3.timeFormat("%Y-%m-%d")(d.date) === key) return d;
+  }
+  return null;
+}
+
 function draw(){
   if (!rawData) return;
 
@@ -234,15 +246,15 @@ function draw(){
       .on("mousemove", (event) => {
         const [mx] = d3.pointer(event, plot.node());
         const date = xScale.invert(mx);
-
-        const pt = nearestDefinedPoint(series, date);
-        if (!pt) return;
-
+      
+        // 用「同一天」的點（而不是最近有效點）
+        const pt = findExactDatePoint(series, date);
+        if (!pt) { tooltip.style("opacity", 0); return; }
+      
         const name = rosterMap.get(p);
         tooltip.style("opacity", 1)
           .html(`
             <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
-            <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(pt.date)}</div>
             <div><b>Elo</b>：${pt.value.toFixed(3)}</div>
           `)
           .style("left", (event.pageX + 12) + "px")
