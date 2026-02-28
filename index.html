@@ -255,18 +255,32 @@ function draw(){
         const [mx] = d3.pointer(event, plot.node());
         const date = xScale.invert(mx);
       
-        // 用「同一天」的點（而不是最近有效點）
         const pt = findExactDatePoint(series, date);
         if (!pt) { tooltip.style("opacity", 0); return; }
       
         const name = rosterMap.get(p);
+      
         tooltip.style("opacity", 1)
           .html(`
             <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
             <div><b>Elo</b>：${pt.value.toFixed(3)}</div>
-          `)
-          .style("left", (event.pageX + 12) + "px")
-          .style("top", (event.pageY + 12) + "px");
+          `);
+      
+        const chartRect = document.getElementById("chart").getBoundingClientRect();
+      
+        const tipNode = tooltip.node();
+        const tipW = tipNode.offsetWidth;
+        const tipH = tipNode.offsetHeight;
+      
+        let x = event.clientX - chartRect.left + 12;
+        let y = event.clientY - chartRect.top  + 12;
+      
+        x = Math.min(x, chartRect.width  - tipW - 8);
+        y = Math.min(y, chartRect.height - tipH - 8);
+      
+        tooltip
+          .style("left", x + "px")
+          .style("top", y + "px");
       })
       .on("mouseleave", () => tooltip.style("opacity", 0));
   }
