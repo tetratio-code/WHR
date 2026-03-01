@@ -38,17 +38,11 @@
     border:none; background:transparent; padding:0; font-size:16px; line-height:1; color:#666;
     cursor:pointer;
   }
-  textarea{
-    width:min(900px, 100%); height:140px; padding:10px;
-    border:1px solid #ddd; border-radius:10px; font-size:13px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    background:#fff;
-  }
 </style>
 </head>
 
 <body>
-<h1>Elo rating 折線圖</h1>
+<h1>Elo rating 折線圖v1.1</h1>
 
 <div class="panel">
   <div class="row">
@@ -59,18 +53,6 @@
 
   <div class="muted" style="margin-top:8px">目前顯示（可移除）：</div>
   <div id="playerChips" class="chips"></div>
-
-  <hr style="border:none;border-top:1px solid #e6e6e6;margin:12px 0;">
-
-  <div class="row" style="justify-content:space-between">
-    <div>
-      <div><b>名錄（可編輯）</b> <span class="muted">每行：選手編號 + TAB/空白 + 名稱</span></div>
-      <div class="muted">例：<code>11348&lt;tab&gt;手塚</code></div>
-    </div>
-    <button id="applyRosterBtn" type="button">套用名錄</button>
-  </div>
-
-  <textarea id="rosterText" spellcheck="false" placeholder="把你的 名錄.txt 貼在這裡（例如：&#10;11348	手塚&#10;603	金田&#10;...）"></textarea>
 
   <div class="muted" style="margin-top:10px">
     Hover 到折線：顯示選手編號（含名錄名稱）、該時間點 Elo。<br/>
@@ -83,6 +65,7 @@
 </div>
 
 <script>
+const ROSTER_PATH = "roster.json";
 const CSV_PATH = "whr_output.csv"; // put next to this HTML on GitHub Pages
 
 let selectedPlayers = new Set();   // will be filled after loading (default = ever-top players)
@@ -108,20 +91,6 @@ const yScale = d3.scaleLinear().range([innerH, 0]);
 const color = d3.scaleOrdinal(d3.schemeTableau10);
 const tooltip = d3.select("#tooltip");
 
-function parseRoster(text){
-  const m = new Map();
-  const lines = text.split(/\r?\n/);
-  for (const line of lines){
-    const s = line.trim();
-    if (!s) continue;
-    const parts = s.split(/\s+/);
-    if (parts.length < 2) continue;
-    const id = parts[0];
-    const name = parts.slice(1).join(" ");
-    m.set(id, name);
-  }
-  return m;
-}
 function displayLabel(id){
   const name = rosterMap.get(id);
   return name ? `${id} (${name})` : id;
@@ -281,14 +250,14 @@ function addPlayer(){
 document.getElementById("addBtn").addEventListener("click", addPlayer);
 document.getElementById("playerInput").addEventListener("keydown", (e)=>{ if(e.key==="Enter") addPlayer(); });
 
-document.getElementById("applyRosterBtn").addEventListener("click", ()=>{
-  rosterMap = parseRoster(document.getElementById("rosterText").value);
-  renderChips();
-});
-
 // Load CSV (long format: date, player_id, elo)
-d3.csv(CSV_PATH).then(rows => {
-  // parse
+Promise.all([
+  d3.json(ROSTER_PATH).catch(()=>({})),
+  d3.csv(CSV_PATH)
+]).then(([roster, rows]) => {
+
+  rosterMap = new Map(Object.entries(roster));
+
   rows.forEach(r => {
     r.date = new Date(r.date);
     r.player_id = String(r.player_id);
