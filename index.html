@@ -294,6 +294,7 @@ Promise.all([
   }
   
   selectedPlayers = new Set([...bestByDate.values()].map(d => d.pid));
+  selectedPlayers.add("13841");
   renderChips();
   draw();
 }).catch(err => {
