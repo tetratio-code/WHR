@@ -304,18 +304,27 @@ d3.csv(CSV_PATH).then(rows => {
   }
   rawRows = rows;
 
-  // default players = ever top by date
+  // default players = ever top by date (AFTER interpolation)
   const bestByDate = new Map(); // YYYY-MM-DD -> {pid, elo}
   const fmt = d3.timeFormat("%Y-%m-%d");
-  for (const r of rows){
-    if (r.elo == null) continue;
-    const k = fmt(r.date);
-    const cur = bestByDate.get(k);
-    if (!cur || r.elo > cur.elo){
-      bestByDate.set(k, {pid: r.player_id, elo: r.elo});
+  
+  for (const [pid, pts] of dataByPlayer.entries()){
+    // 內插需要至少 2 個點
+    if (!pts || pts.length < 2) continue;
+  
+    const daily = interpolateDaily(pts); // [{date: dayStart, elo: number}]
+  
+    for (const d of daily){
+      if (d.elo == null || Number.isNaN(d.elo)) continue;
+      const k = fmt(d.date); // YYYY-MM-DD
+      const cur = bestByDate.get(k);
+      if (!cur || d.elo > cur.elo){
+        bestByDate.set(k, {pid, elo: d.elo});
+      }
     }
   }
-  selectedPlayers = new Set([...bestByDate.values()].map(d=>d.pid));
+  
+  selectedPlayers = new Set([...bestByDate.values()].map(d => d.pid));
   renderChips();
   draw();
 }).catch(err => {
