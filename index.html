@@ -64,13 +64,6 @@
 
   <div class="muted" style="margin-top:8px">目前顯示（可移除）：</div>
   <div id="playerChips" class="chips"></div>
-
-  <div class="muted" style="margin-top:10px">
-    Hover 到折線：顯示選手編號 / 名稱 / 該時間點 Elo。<br/>
-    預設顯示：<b>內插補值後</b>曾當過日冠軍的選手（並強制加入 13841）。<br/>
-    折線圖名稱來源：優先 <code>roster.json</code>，若沒有則從 <code>joueurs.txt</code> 尋找。<br/>
-    排行榜名稱來源：<b>只看</b> <code>joueurs.txt</code>。
-  </div>
 </div>
 
 <div id="chart" style="margin-top:12px">
@@ -338,7 +331,7 @@ function computeRanking(){
   const endStr = document.getElementById("rankEnd").value;
   const end = endStr ? new Date(endStr + "T00:00:00") : new Date();
   const start = new Date(end);
-  start.setFullYear(end.getFullYear() - 1);
+  start.setFullYear(end.getFullYear() - 3);
 
   // include players who have ANY match within [start, end]
   const active = new Set();
