@@ -212,6 +212,68 @@ function draw(){
     .x(d => xScale(d.date))
     .y(d => yScale(d.elo));
 
+  // ⭐ 名次快取（只在 hover 時計算）
+  const rankCache = new Map(); // key: "YYYY-MM-DD|pid1,pid2,..."
+
+  function eloAtDateFromSeries(series, date){
+    if (!series || series.length === 0) return null;
+
+    const first = series[0].date;
+    const last  = series[series.length - 1].date;
+
+    if (date < first) return null;
+    if (date >= last) return series[series.length - 1].elo; // hover 晚於最後 → 用最後 Elo
+
+    const bisect = d3.bisector(d=>d.date).left;
+    const idx = bisect(series, date);
+
+    if (series[idx] && +series[idx].date === +date) return series[idx].elo;
+    if (series[idx-1] && +series[idx-1].date === +date) return series[idx-1].elo;
+
+    // 理論上不會到這裡（因為是逐日 series），保險回傳 null
+    return null;
+  }
+
+  function getRanksForDate(date){
+    // 以目前顯示的 players 當排名池（只算目前顯示的選手）
+    const idsSorted = [...players].sort((a,b)=>Number(a)-Number(b));
+    const key = `${d3.timeFormat("%Y-%m-%d")(date)}|${idsSorted.join(",")}`;
+    const cached = rankCache.get(key);
+    if (cached) return cached;
+
+    const vals = [];
+    for (const pid of players){
+      const s = seriesByPlayer.get(pid);
+      const elo = eloAtDateFromSeries(s, date);
+      if (elo == null || Number.isNaN(elo)) continue;
+      vals.push({ pid, elo });
+    }
+
+    // 由大到小排序
+    vals.sort((a,b)=>b.elo - a.elo);
+
+    // 建 rank map：名次 = 1 + 比他大的數量（同分同名次）
+    const rankMap = new Map();
+    let prevElo = null;
+    let prevRank = 0;
+    for (let i=0;i<vals.length;i++){
+      const v = vals[i];
+      let rank;
+      if (prevElo !== null && v.elo === prevElo){
+        rank = prevRank;
+      } else {
+        rank = i + 1;
+      }
+      rankMap.set(v.pid, rank);
+      prevElo = v.elo;
+      prevRank = rank;
+    }
+
+    const result = { rankMap, total: vals.length };
+    rankCache.set(key, result);
+    return result;
+  }
+
   for (const p of players){
     const series = seriesByPlayer.get(p);
     if (!series) continue;
@@ -235,18 +297,21 @@ function draw(){
         const [mx] = d3.pointer(event, plot.node());
         const date = d3.timeDay.floor(xScale.invert(mx));
 
-        const bisect = d3.bisector(d=>d.date).left;
-        const idx = bisect(series, date);
-        const pt = (series[idx] && (+series[idx].date === +date)) ? series[idx]
-                : ((series[idx-1] && (+series[idx-1].date === +date)) ? series[idx-1] : null);
-        if (!pt) { tooltip.style("opacity", 0); return; }
+        // 取本選手當天 Elo（逐日 series => exact day）
+        const eloHere = eloAtDateFromSeries(series, date);
+        if (eloHere == null) { tooltip.style("opacity", 0); return; }
+
+        // ⭐ 只在 hover 時計算名次（且只算目前顯示的選手）
+        const { rankMap, total } = getRanksForDate(date);
+        const rank = rankMap.get(p); // 若該日此人沒 Elo（理論上不會）會是 undefined
 
         const name = getNameForChart(p);
         tooltip.style("opacity", 1)
           .html(`
             <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
-            <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(pt.date)}</div>
-            <div><b>Elo</b>：${pt.elo.toFixed(3)}</div>
+            <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(date)}</div>
+            <div><b>Elo</b>：${eloHere.toFixed(3)}</div>
+            <div><b>名次</b>：${rank ? `${rank}/${total}` : `—/${total}`}</div>
           `);
 
         const chartRect = document.getElementById("chart").getBoundingClientRect();
