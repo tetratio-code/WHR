@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -67,7 +68,8 @@
   <div class="muted" style="margin-top:10px">
     Hover 到折線：顯示選手編號 / 名稱 / 該時間點 Elo。<br/>
     預設顯示：<b>內插補值後</b>曾當過日冠軍的選手（並強制加入 13841）。<br/>
-    名稱來源：優先 <code>roster.json</code>，若沒有則從 <code>joueurs.txt</code> 尋找。
+    折線圖名稱來源：優先 <code>roster.json</code>，若沒有則從 <code>joueurs.txt</code> 尋找。<br/>
+    排行榜名稱來源：<b>只看</b> <code>joueurs.txt</code>。
   </div>
 </div>
 
@@ -78,9 +80,9 @@
 <div class="sectionTitle">Elo rating 排行榜</div>
 <div class="panel">
   <div class="row">
-    <label class="muted">起始時間</label>
-    <input id="rankStart" type="date" />
-    <span class="muted">（預設：回推一年；若該範圍內有參與比賽，取「範圍內最近一筆」Elo）</span>
+    <label class="muted">結束時間點</label>
+    <input id="rankEnd" type="date" />
+    <span class="muted">（取結束時間點往回一年；以「內插後」的 Elo 在結束時間點排序；若該玩家全期最後一場比賽早於結束時間點，則用最後一場 Elo）</span>
     <span id="rankMeta" class="pill"></span>
   </div>
   <div id="rankTableWrap"></div>
@@ -96,14 +98,14 @@ const ROSTER_PATH = "roster.json";
 const JOUEURS_PATH = "joueurs.txt";
 const CSV_PATH = "whr_output.csv"; // put next to this HTML on GitHub Pages
 
-let selectedPlayers = new Set();   // will be filled after loading (default = ever-top players)
-let rosterMap = new Map();         // id -> name (roster.json)
-let joueursMap = new Map();        // id -> name (joueurs.txt)
-let dataByPlayer = new Map();      // id -> [{date:Date, elo:number}] sorted (non-null)
-let rawRows = [];                  // all parsed rows (including null elo filtered later for some uses)
+let selectedPlayers = new Set();
+let rosterMap = new Map();         // for chart labels
+let joueursMap = new Map();        // for chart labels + leaderboard labels
+let dataByPlayer = new Map();      // pid -> [{date, elo}] sorted (non-null)
+let rawRows = [];                  // parsed CSV rows (elo null filtered in some steps)
 
 // leaderboard state
-let rankRows = [];                 // [{pid, name, elo, date}]
+let rankRows = [];                 // [{pid, name, elo, dateUsed}]
 let currentPage = 1;
 const PAGE_SIZE = 100;
 
@@ -125,11 +127,14 @@ const yScale = d3.scaleLinear().range([innerH, 0]);
 const color = d3.scaleOrdinal(d3.schemeTableau10);
 const tooltip = d3.select("#tooltip");
 
-function getName(pid){
+function getNameForChart(pid){
   return rosterMap.get(pid) || joueursMap.get(pid) || "";
 }
+function getNameForLeaderboard(pid){
+  return joueursMap.get(pid) || ""; // leaderboard ONLY joueurs.txt
+}
 function displayLabel(pid){
-  const name = getName(pid);
+  const name = getNameForChart(pid);
   return name ? `${pid} (${name})` : pid;
 }
 
@@ -153,7 +158,7 @@ function renderChips(){
   });
 }
 
-// Linear interpolate to daily points between known dates (inclusive)
+// Linear interpolate to daily points between known dates (inclusive) for drawing
 function interpolateDaily(points){
   if (!points || points.length === 0) return [];
   const pts = points.slice().sort((a,b)=>a.date-b.date);
@@ -240,7 +245,7 @@ function draw(){
                 : ((series[idx-1] && (+series[idx-1].date === +date)) ? series[idx-1] : null);
         if (!pt) { tooltip.style("opacity", 0); return; }
 
-        const name = getName(p);
+        const name = getNameForChart(p);
         tooltip.style("opacity", 1)
           .html(`
             <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
@@ -283,53 +288,87 @@ document.getElementById("addBtn").addEventListener("click", addPlayer);
 document.getElementById("playerInput").addEventListener("keydown", (e)=>{ if(e.key==="Enter") addPlayer(); });
 
 function parseJoueurs(text){
+  // Parses lines like:
+  // 150009 WETTERGREN, Niklas                   %_<2198>
+  // Keep EXACT name part before %_... (if exists), trimming trailing spaces only.
   const m = new Map();
   const lines = text.split(/\r?\n/);
   for (const line of lines){
-    const s = line.trimEnd();
-    if (!s) continue;
-    const match = s.match(/^\s*(\d+)\s+(.+?)(?:\s+%_.*)?\s*$/);
+    if (!line) continue;
+    const match = line.match(/^\s*(\d+)\s+(.*?)(?:\s+%_.*)?\s*$/);
     if (!match) continue;
     const id = match[1];
-    const name = match[2].trim();
+    const name = (match[2] || "").trim();
     if (!m.has(id) && name) m.set(id, name);
   }
   return m;
 }
 
-// ---------- Leaderboard ----------
-function setDefaultRankStart(){
+// -------- Leaderboard (end date, last 1y window, interpolated Elo at end) --------
+function setDefaultRankEnd(){
   const today = new Date();
-  const d = new Date(today.getFullYear()-1, today.getMonth(), today.getDate());
-  document.getElementById("rankStart").value = d.toISOString().slice(0,10);
+  document.getElementById("rankEnd").value = today.toISOString().slice(0,10);
+}
+
+function getEloAt(points, target){
+  // points sorted by date ascending, length>=1, values non-null
+  const n = points.length;
+  if (n === 0) return null;
+
+  const first = points[0].date;
+  const last = points[n-1].date;
+
+  if (target < first) return null;
+
+  // if target is after last game, use last game Elo (no extrapolation)
+  if (target >= last) return { elo: points[n-1].elo, dateUsed: last };
+
+  // find rightmost point with date <= target
+  const bisect = d3.bisector(d=>d.date).right;
+  const idx = bisect(points, target) - 1; // idx in [0, n-2]
+  const a = points[idx];
+  const b = points[idx+1];
+
+  const t = (b.date - a.date) === 0 ? 0 : (target - a.date) / (b.date - a.date);
+  const v = a.elo + t * (b.elo - a.elo);
+  return { elo: v, dateUsed: target };
 }
 
 function computeRanking(){
-  const startStr = document.getElementById("rankStart").value;
-  const start = startStr ? new Date(startStr + "T00:00:00") : new Date(0);
+  const endStr = document.getElementById("rankEnd").value;
+  const end = endStr ? new Date(endStr + "T00:00:00") : new Date();
+  const start = new Date(end);
+  start.setFullYear(end.getFullYear() - 1);
 
-  const latest = new Map(); // pid -> {date, elo}
+  // include players who have ANY match within [start, end]
+  const active = new Set();
   for (const r of rawRows){
     if (r.elo == null) continue;
-    if (r.date < start) continue;
-    const cur = latest.get(r.player_id);
-    if (!cur || r.date > cur.date){
-      latest.set(r.player_id, {date:r.date, elo:r.elo});
-    }
+    if (r.date < start || r.date > end) continue;
+    active.add(r.player_id);
   }
 
-  rankRows = [...latest.entries()].map(([pid, v]) => ({
-    pid,
-    name: getName(pid),
-    elo: v.elo,
-    date: v.date
-  })).sort((a,b) => b.elo - a.elo);
+  const rows = [];
+  for (const pid of active){
+    const pts = dataByPlayer.get(pid);
+    if (!pts || pts.length === 0) continue;
+    const res = getEloAt(pts, end);
+    if (!res) continue;
+    rows.push({
+      pid,
+      name: getNameForLeaderboard(pid),
+      elo: res.elo,
+      dateUsed: res.dateUsed
+    });
+  }
 
+  rows.sort((a,b)=> b.elo - a.elo);
+  rankRows = rows;
   currentPage = 1;
-  renderRanking();
+  renderRanking(start, end);
 }
 
-function renderRanking(){
+function renderRanking(start, end){
   const wrap = document.getElementById("rankTableWrap");
   const total = rankRows.length;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -342,12 +381,13 @@ function renderRanking(){
   const rowsHtml = slice.map((d, i) => {
     const rank = startIdx + i + 1;
     const name = d.name ? d.name : "(未命名)";
+    // dateUsed is the end-date (if interpolated) OR last game date (if end after last)
     return `<tr>
       <td>${rank}</td>
       <td>${d.pid}</td>
       <td>${name}</td>
       <td>${d.elo.toFixed(3)}</td>
-      <td>${fmtDate(d.date)}</td>
+      <td>${fmtDate(d.dateUsed)}</td>
     </tr>`;
   }).join("");
 
@@ -357,9 +397,9 @@ function renderRanking(){
         <tr>
           <th style="width:70px">排名</th>
           <th style="width:110px">ID</th>
-          <th>選手</th>
+          <th>選手（joueurs.txt）</th>
           <th style="width:120px">Elo</th>
-          <th style="width:120px">日期</th>
+          <th style="width:120px">取值日期</th>
         </tr>
       </thead>
       <tbody>
@@ -369,18 +409,32 @@ function renderRanking(){
   `;
 
   document.getElementById("pageInfo").textContent = `第 ${currentPage} / ${pages} 頁（共 ${total} 筆，每頁 ${PAGE_SIZE} 筆）`;
-  document.getElementById("rankMeta").textContent = `players: ${total}`;
+  document.getElementById("rankMeta").textContent =
+    `${fmtDate(start)} ~ ${fmtDate(end)} | players: ${total}`;
 
   document.getElementById("prevPageBtn").disabled = (currentPage <= 1);
   document.getElementById("nextPageBtn").disabled = (currentPage >= pages);
 }
 
-document.getElementById("rankStart").addEventListener("change", computeRanking);
-document.getElementById("prevPageBtn").addEventListener("click", ()=>{ currentPage--; renderRanking(); });
-document.getElementById("nextPageBtn").addEventListener("click", ()=>{ currentPage++; renderRanking(); });
+document.getElementById("rankEnd").addEventListener("change", computeRanking);
+document.getElementById("prevPageBtn").addEventListener("click", ()=>{
+  currentPage--;
+  // recompute start/end for meta display
+  const endStr = document.getElementById("rankEnd").value;
+  const end = endStr ? new Date(endStr + "T00:00:00") : new Date();
+  const start = new Date(end); start.setFullYear(end.getFullYear()-1);
+  renderRanking(start, end);
+});
+document.getElementById("nextPageBtn").addEventListener("click", ()=>{
+  currentPage++;
+  const endStr = document.getElementById("rankEnd").value;
+  const end = endStr ? new Date(endStr + "T00:00:00") : new Date();
+  const start = new Date(end); start.setFullYear(end.getFullYear()-1);
+  renderRanking(start, end);
+});
 
 // ---------- Load everything ----------
-setDefaultRankStart();
+setDefaultRankEnd();
 
 Promise.all([
   d3.json(ROSTER_PATH).catch(()=>({})),
@@ -429,7 +483,7 @@ Promise.all([
 
   computeRanking();
 }).catch(err => {
-  alert("讀取失敗：請確認以下檔案與 index.html 在同資料夾：\n- whr_output.csv\n- roster.json（可選）\n- joueurs.txt（可選）\n\n" + err);
+  alert("讀取失敗：請確認以下檔案與 index.html 在同資料夾：\n- whr_output.csv\n- roster.json（可選）\n- joueurs.txt（必要，排行榜只看它）\n\n" + err);
 });
 </script>
 </body>
