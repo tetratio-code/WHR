@@ -358,10 +358,12 @@ function computeRanking(){
     if (!pts || pts.length === 0) continue;
     const res = getEloAt(pts, end);
     if (!res) continue;
+    const score = Math.pow(2, (res.elo - 1040) / 120);
     rows.push({
       pid,
       name: getNameForLeaderboard(pid),
       elo: res.elo,
+      score,
       dateUsed: res.dateUsed
     });
   }
@@ -407,6 +409,7 @@ function renderRanking(start, end){
       <td>${d.pid}</td>
       <td>${name}</td>
       <td>${d.elo.toFixed(3)}</td>
+      <td>${d.score.toFixed(2)}</td>
       <td>${fmtDate(d.dateUsed)}</td>
     </tr>`;
   }).join("");
@@ -419,6 +422,7 @@ function renderRanking(start, end){
           <th style="width:110px">ID</th>
           <th>選手（joueurs.txt）</th>
           <th style="width:120px">Elo</th>
+          <th style="width:120px">戰力</th>
           <th style="width:120px">取值日期</th>
         </tr>
       </thead>
