@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Elo rating 折線圖</title>
+<title>Elo rating (WHR)</title>
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 
 <style>
@@ -75,7 +75,8 @@
   <div class="row">
     <label class="muted">結束時間點</label>
     <input id="rankEnd" type="date" />
-    <span class="muted">（取結束時間點往回一年；以「內插後」的 Elo 在結束時間點排序；若該玩家全期最後一場比賽早於結束時間點，則用最後一場 Elo）</span>
+    <label class="muted">Country</label>
+    <input id="rankCountry" type="number" style="width:80px" placeholder="例如 42">
     <span id="rankMeta" class="pill"></span>
   </div>
   <div id="rankTableWrap"></div>
@@ -342,7 +343,15 @@ function computeRanking(){
   }
 
   const rows = [];
+  const countryVal = document.getElementById("rankCountry").value;
+  const country = countryVal === "" ? null : Number(countryVal);
   for (const pid of active){
+    if (country !== null){
+      const id = Number(pid);
+      const low = country * 10000;
+      const high = low + 9999;
+      if (id < low || id > high) continue;
+    }
     const pts = dataByPlayer.get(pid);
     if (!pts || pts.length === 0) continue;
     const res = getEloAt(pts, end);
@@ -410,6 +419,7 @@ function renderRanking(start, end){
 }
 
 document.getElementById("rankEnd").addEventListener("change", computeRanking);
+document.getElementById("rankCountry").addEventListener("input", computeRanking);
 document.getElementById("prevPageBtn").addEventListener("click", ()=>{
   currentPage--;
   // recompute start/end for meta display
