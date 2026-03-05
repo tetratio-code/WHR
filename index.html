@@ -77,6 +77,8 @@
     <input id="rankEnd" type="date" />
     <label class="muted">Country</label>
     <input id="rankCountry" type="number" style="width:80px" placeholder="例如 42">
+    <span class="muted">總戰力：</span>
+    <span id="countryPower" class="pill">0</span>
     <span id="rankMeta" class="pill"></span>
   </div>
   <div id="rankTableWrap"></div>
@@ -366,6 +368,22 @@ function computeRanking(){
 
   rows.sort((a,b)=> b.elo - a.elo);
   rankRows = rows;
+  
+  // ===== 計算總戰力 =====
+  const top = rankRows.slice(0, 82);
+  
+  let power = 0;
+  for (const r of top){
+    const score = Math.pow(2, (r.elo - 1040) / 120);
+    power += score;
+  }
+  
+  power = power / 12;
+  
+  document.getElementById("countryPower").textContent =
+    power.toFixed(2);
+  // =====================
+  
   currentPage = 1;
   renderRanking(start, end);
 }
