@@ -358,7 +358,7 @@ function computeRanking(){
     if (!pts || pts.length === 0) continue;
     const res = getEloAt(pts, end);
     if (!res) continue;
-    const score = Math.pow(2, (res.elo - 1040) / 120);
+    const score = Math.pow(2, (res.elo - 1040) / 120) / 12;
     rows.push({
       pid,
       name: getNameForLeaderboard(pid),
@@ -376,11 +376,9 @@ function computeRanking(){
   
   let power = 0;
   for (const r of top){
-    const score = Math.pow(2, (r.elo - 1040) / 120);
+    const score = Math.pow(2, (r.elo - 1040) / 120) / 12;
     power += score;
   }
-  
-  power = power / 12;
   
   document.getElementById("countryPower").textContent =
     power.toFixed(2);
@@ -420,7 +418,7 @@ function renderRanking(start, end){
         <tr>
           <th style="width:70px">排名</th>
           <th style="width:110px">ID</th>
-          <th>選手（joueurs.txt）</th>
+          <th>選手</th>
           <th style="width:120px">Elo</th>
           <th style="width:120px">戰力</th>
           <th style="width:120px">取值日期</th>
