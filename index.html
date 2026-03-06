@@ -75,6 +75,10 @@
   <div class="row">
     <label class="muted">結束時間點</label>
     <input id="rankEnd" type="date" />
+    
+    <label class="muted">搜尋</label>
+    <input id="rankSearch" type="text" style="width:220px" placeholder="輸入選手ID或名字">
+    
     <label class="muted">Country</label>
     <input id="rankCountry" type="number" style="width:80px" placeholder="例如 42">
     <span class="muted">總戰力：</span>
@@ -104,7 +108,8 @@ let rawRows = [];                  // parsed CSV rows (elo null filtered in some
 let rankRows = [];                 // [{pid, name, elo, dateUsed}]
 let currentPage = 1;
 const PAGE_SIZE = 100;
-
+let rankWindowStart = null;
+let rankWindowEnd = null;
 const width = 1200;
 const height = 560;
 const margin = {top:20,right:20,bottom:40,left:70};
@@ -369,7 +374,9 @@ function computeRanking(){
   }
 
   rows.sort((a,b)=> b.elo - a.elo);
-  rankRows = rows;
+  rankRows = rows.map((d, i) => ({ ...d, globalRank: i + 1 }));
+  rankWindowStart = start;
+  rankWindowEnd = end;;
   
   // ===== 計算總戰力 =====
   const top = rankRows.slice(0, 82);
@@ -387,23 +394,34 @@ function computeRanking(){
   currentPage = 1;
   renderRanking(start, end);
 }
+function getFilteredRankRows(){
+  const q = (document.getElementById("rankSearch")?.value || "").trim().toLowerCase();
+  if (!q) return rankRows;
 
-function renderRanking(start, end){
+  return rankRows.filter(d => {
+    const pid = String(d.pid).toLowerCase();
+    const name = String(d.name || "").toLowerCase();
+    return pid.includes(q) || name.includes(q);
+  });
+}
+function renderRanking(start = rankWindowStart, end = rankWindowEnd){
   const wrap = document.getElementById("rankTableWrap");
-  const total = rankRows.length;
+
+  const filtered = getFilteredRankRows();
+  const totalAll = rankRows.length;
+  const total = filtered.length;
+
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   currentPage = Math.min(Math.max(1, currentPage), pages);
 
   const startIdx = (currentPage - 1) * PAGE_SIZE;
-  const slice = rankRows.slice(startIdx, startIdx + PAGE_SIZE);
+  const slice = filtered.slice(startIdx, startIdx + PAGE_SIZE);
 
   const fmtDate = d3.timeFormat("%Y-%m-%d");
-  const rowsHtml = slice.map((d, i) => {
-    const rank = startIdx + i + 1;
+  const rowsHtml = slice.map(d => {
     const name = d.name ? d.name : "(未命名)";
-    // dateUsed is the end-date (if interpolated) OR last game date (if end after last)
     return `<tr>
-      <td>${rank}</td>
+      <td>${d.globalRank}</td>
       <td>${d.pid}</td>
       <td>${name}</td>
       <td>${d.elo.toFixed(3)}</td>
@@ -425,14 +443,16 @@ function renderRanking(start, end){
         </tr>
       </thead>
       <tbody>
-        ${rowsHtml || `<tr><td colspan="5" class="muted">無資料</td></tr>`}
+        ${rowsHtml || `<tr><td colspan="6" class="muted">無資料</td></tr>`}
       </tbody>
     </table>
   `;
 
-  document.getElementById("pageInfo").textContent = `第 ${currentPage} / ${pages} 頁（共 ${total} 筆，每頁 ${PAGE_SIZE} 筆）`;
+  document.getElementById("pageInfo").textContent =
+    `第 ${currentPage} / ${pages} 頁（本頁依搜尋顯示，共 ${total} 筆；全域 ${totalAll} 筆，每頁 ${PAGE_SIZE} 筆）`;
+
   document.getElementById("rankMeta").textContent =
-    `${fmtDate(start)} ~ ${fmtDate(end)} | players: ${total}`;
+    `${start && end ? `${fmtDate(start)} ~ ${fmtDate(end)} | ` : ""}shown: ${total} / all: ${totalAll}`;
 
   document.getElementById("prevPageBtn").disabled = (currentPage <= 1);
   document.getElementById("nextPageBtn").disabled = (currentPage >= pages);
@@ -442,18 +462,15 @@ document.getElementById("rankEnd").addEventListener("change", computeRanking);
 document.getElementById("rankCountry").addEventListener("input", computeRanking);
 document.getElementById("prevPageBtn").addEventListener("click", ()=>{
   currentPage--;
-  // recompute start/end for meta display
-  const endStr = document.getElementById("rankEnd").value;
-  const end = endStr ? new Date(endStr + "T00:00:00") : new Date();
-  const start = new Date(end); start.setFullYear(end.getFullYear()-1);
-  renderRanking(start, end);
+  renderRanking();
 });
 document.getElementById("nextPageBtn").addEventListener("click", ()=>{
   currentPage++;
-  const endStr = document.getElementById("rankEnd").value;
-  const end = endStr ? new Date(endStr + "T00:00:00") : new Date();
-  const start = new Date(end); start.setFullYear(end.getFullYear()-1);
-  renderRanking(start, end);
+  renderRanking();
+});
+document.getElementById("rankSearch").addEventListener("input", ()=>{
+  currentPage = 1;
+  renderRanking();
 });
 
 // ---------- Load everything ----------
