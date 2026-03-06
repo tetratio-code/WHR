@@ -363,7 +363,7 @@ function computeRanking(){
     if (!pts || pts.length === 0) continue;
     const res = getEloAt(pts, end);
     if (!res) continue;
-    const score = Math.pow(2, (res.elo - 1040) / 120) / 12;
+    const score = Math.pow(2, (res.elo - 1040) / 120) / 10.83;
     rows.push({
       pid,
       name: getNameForLeaderboard(pid),
@@ -383,7 +383,7 @@ function computeRanking(){
   
   let power = 0;
   for (const r of top){
-    const score = Math.pow(2, (r.elo - 1040) / 120) / 12;
+    const score = Math.pow(2, (r.elo - 1040) / 120) / 10.83;
     power += score;
   }
   
