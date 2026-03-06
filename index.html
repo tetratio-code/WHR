@@ -24,7 +24,7 @@
     box-shadow:0 6px 18px rgba(0,0,0,0.08);
     white-space:nowrap;
   }
-  input[type="text"], input[type="date"]{
+  input[type="text"], input[type="date"], select{
     padding:6px 10px; border:1px solid #ccc; border-radius:8px; font-size:14px;
   }
   input[type="text"]{ width:180px; }
@@ -79,7 +79,9 @@
     <input id="rankSearch" type="text" style="width:220px" placeholder="輸入選手ID或名字">
 
     <label class="muted">Country</label>
-    <input id="rankCountry" type="text" style="width:80px" placeholder="例如 ARG">
+    <select id="rankCountry" style="padding:6px 10px; border:1px solid #ccc; border-radius:8px; font-size:14px;">
+      <option value="">全部</option>
+    </select>
 
     <span class="muted">總戰力：</span>
     <span id="countryPower" class="pill">0</span>
@@ -395,6 +397,20 @@ function parseJoueurs(text){
   return m;
 }
 
+function populateCountrySelect(){
+  const select = document.getElementById("rankCountry");
+  const paysSet = new Set();
+
+  for (const info of joueursMap.values()){
+    if (info.pays) paysSet.add(info.pays);
+  }
+
+  const paysList = [...paysSet].sort();
+
+  select.innerHTML = `<option value="">全部</option>` +
+    paysList.map(p => `<option value="${p}">${p}</option>`).join("");
+}
+
 // -------- Leaderboard --------
 function setDefaultRankEnd(){
   const today = new Date();
@@ -550,7 +566,7 @@ document.getElementById("rankSearch").addEventListener("input", ()=>{
   currentPage = 1;
   renderRanking();
 });
-document.getElementById("rankCountry").addEventListener("input", computeRanking);
+document.getElementById("rankCountry").addEventListener("change", computeRanking);
 document.getElementById("prevPageBtn").addEventListener("click", ()=>{
   currentPage--;
   renderRanking();
@@ -570,6 +586,7 @@ Promise.all([
 ]).then(([roster, joueursText, rows]) => {
   rosterMap = new Map(Object.entries(roster));
   joueursMap = parseJoueurs(joueursText);
+  populateCountrySelect();
 
   rows.forEach(r => {
     r.date = new Date(r.date);
