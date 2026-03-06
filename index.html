@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -75,12 +74,13 @@
   <div class="row">
     <label class="muted">結束時間點</label>
     <input id="rankEnd" type="date" />
-    
+
     <label class="muted">搜尋</label>
     <input id="rankSearch" type="text" style="width:220px" placeholder="輸入選手ID或名字">
-    
+
     <label class="muted">Country</label>
-    <input id="rankCountry" type="text" style="width:80px" placeholder="例如 TWN">
+    <input id="rankCountry" type="text" style="width:80px" placeholder="例如 ARG">
+
     <span class="muted">總戰力：</span>
     <span id="countryPower" class="pill">0</span>
     <span id="rankMeta" class="pill"></span>
@@ -96,20 +96,21 @@
 <script>
 const ROSTER_PATH = "roster.json";
 const JOUEURS_PATH = "joueurs.txt";
-const CSV_PATH = "whr_output.csv"; // put next to this HTML on GitHub Pages
+const CSV_PATH = "whr_output.csv";
 
 let selectedPlayers = new Set();
-let rosterMap = new Map();         // for chart labels
-let joueursMap = new Map();        // for chart labels + leaderboard labels
-let dataByPlayer = new Map();      // pid -> [{date, elo}] sorted (non-null)
-let rawRows = [];                  // parsed CSV rows (elo null filtered in some steps)
+let rosterMap = new Map();         // chart labels priority
+let joueursMap = new Map();        // id -> {name, pays}
+let dataByPlayer = new Map();      // pid -> [{date, elo}] sorted
+let rawRows = [];                  // parsed CSV rows
 
 // leaderboard state
-let rankRows = [];                 // [{pid, name, elo, dateUsed}]
+let rankRows = [];                 // [{globalRank, pid, name, pays, elo, score, dateUsed}]
 let currentPage = 1;
 const PAGE_SIZE = 100;
 let rankWindowStart = null;
 let rankWindowEnd = null;
+
 const width = 1200;
 const height = 560;
 const margin = {top:20,right:20,bottom:40,left:70};
@@ -146,6 +147,7 @@ function getPaysForLeaderboard(pid){
   const j = getJoueurInfo(pid);
   return j ? j.pays : "";
 }
+
 function displayLabel(pid){
   const name = getNameForChart(pid);
   return name ? `${pid} (${name})` : pid;
@@ -171,7 +173,7 @@ function renderChips(){
   });
 }
 
-// Linear interpolate to daily points between known dates (inclusive) for drawing
+// Linear interpolate to daily points between known dates (inclusive)
 function interpolateDaily(points){
   if (!points || points.length === 0) return [];
   const pts = points.slice().sort((a,b)=>a.date-b.date);
@@ -229,6 +231,63 @@ function draw(){
     .x(d => xScale(d.date))
     .y(d => yScale(d.elo));
 
+  // hover 時計算當天名次，只算目前顯示的選手
+  const rankCache = new Map();
+
+  function eloAtDateFromSeries(series, date){
+    if (!series || series.length === 0) return null;
+
+    const first = series[0].date;
+    const last  = series[series.length - 1].date;
+
+    if (date < first) return null;
+    if (date >= last) return series[series.length - 1].elo;
+
+    const bisect = d3.bisector(d=>d.date).left;
+    const idx = bisect(series, date);
+
+    if (series[idx] && +series[idx].date === +date) return series[idx].elo;
+    if (series[idx-1] && +series[idx-1].date === +date) return series[idx-1].elo;
+    return null;
+  }
+
+  function getRanksForDate(date){
+    const idsSorted = [...players].sort((a,b)=>Number(a)-Number(b));
+    const key = `${d3.timeFormat("%Y-%m-%d")(date)}|${idsSorted.join(",")}`;
+    const cached = rankCache.get(key);
+    if (cached) return cached;
+
+    const vals = [];
+    for (const pid of players){
+      const s = seriesByPlayer.get(pid);
+      const elo = eloAtDateFromSeries(s, date);
+      if (elo == null || Number.isNaN(elo)) continue;
+      vals.push({ pid, elo });
+    }
+
+    vals.sort((a,b)=>b.elo - a.elo);
+
+    const rankMap = new Map();
+    let prevElo = null;
+    let prevRank = 0;
+    for (let i=0;i<vals.length;i++){
+      const v = vals[i];
+      let rank;
+      if (prevElo !== null && v.elo === prevElo){
+        rank = prevRank;
+      } else {
+        rank = i + 1;
+      }
+      rankMap.set(v.pid, rank);
+      prevElo = v.elo;
+      prevRank = rank;
+    }
+
+    const result = { rankMap, total: vals.length };
+    rankCache.set(key, result);
+    return result;
+  }
+
   for (const p of players){
     const series = seriesByPlayer.get(p);
     if (!series) continue;
@@ -252,18 +311,19 @@ function draw(){
         const [mx] = d3.pointer(event, plot.node());
         const date = d3.timeDay.floor(xScale.invert(mx));
 
-        const bisect = d3.bisector(d=>d.date).left;
-        const idx = bisect(series, date);
-        const pt = (series[idx] && (+series[idx].date === +date)) ? series[idx]
-                : ((series[idx-1] && (+series[idx-1].date === +date)) ? series[idx-1] : null);
-        if (!pt) { tooltip.style("opacity", 0); return; }
+        const eloHere = eloAtDateFromSeries(series, date);
+        if (eloHere == null) { tooltip.style("opacity", 0); return; }
+
+        const { rankMap, total } = getRanksForDate(date);
+        const rank = rankMap.get(p);
 
         const name = getNameForChart(p);
         tooltip.style("opacity", 1)
           .html(`
             <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
-            <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(pt.date)}</div>
-            <div><b>Elo</b>：${pt.elo.toFixed(3)}</div>
+            <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(date)}</div>
+            <div><b>Elo</b>：${eloHere.toFixed(3)}</div>
+            <div><b>名次</b>：${rank ? `${rank}/${total}` : `—/${total}`}</div>
           `);
 
         const chartRect = document.getElementById("chart").getBoundingClientRect();
@@ -301,10 +361,7 @@ document.getElementById("addBtn").addEventListener("click", addPlayer);
 document.getElementById("playerInput").addEventListener("keydown", (e)=>{ if(e.key==="Enter") addPlayer(); });
 
 function parseJoueurs(text){
-  // joueurs.txt 格式：
-  // pays = ARG
-  //   4167 COELLO, Alejandro                    %_<1853>
-  // 需記住目前 pays，並把每位玩家存成 { name, pays }
+  // 依 joueurs.txt 的 pays = XXX 分組解析
   const m = new Map();
   const lines = text.split(/\r?\n/);
   let currentPays = "";
@@ -314,14 +371,12 @@ function parseJoueurs(text){
 
     const trimmed = line.trim();
 
-    // 解析 pays = XXX
     const paysMatch = trimmed.match(/^pays\s*=\s*([A-Z]{3})$/i);
     if (paysMatch){
       currentPays = paysMatch[1].toUpperCase();
       continue;
     }
 
-    // 解析玩家列
     const playerMatch = line.match(/^\s*(\d+)\s+(.*?)(?:\s+%_.*)?\s*$/);
     if (!playerMatch) continue;
 
@@ -340,8 +395,13 @@ function parseJoueurs(text){
   return m;
 }
 
+// -------- Leaderboard --------
+function setDefaultRankEnd(){
+  const today = new Date();
+  document.getElementById("rankEnd").value = today.toISOString().slice(0,10);
+}
+
 function getEloAt(points, target){
-  // points sorted by date ascending, length>=1, values non-null
   const n = points.length;
   if (n === 0) return null;
 
@@ -349,13 +409,10 @@ function getEloAt(points, target){
   const last = points[n-1].date;
 
   if (target < first) return null;
-
-  // if target is after last game, use last game Elo (no extrapolation)
   if (target >= last) return { elo: points[n-1].elo, dateUsed: last };
 
-  // find rightmost point with date <= target
   const bisect = d3.bisector(d=>d.date).right;
-  const idx = bisect(points, target) - 1; // idx in [0, n-2]
+  const idx = bisect(points, target) - 1;
   const a = points[idx];
   const b = points[idx+1];
 
@@ -364,13 +421,23 @@ function getEloAt(points, target){
   return { elo: v, dateUsed: target };
 }
 
+function getFilteredRankRows(){
+  const q = (document.getElementById("rankSearch")?.value || "").trim().toLowerCase();
+  if (!q) return rankRows;
+
+  return rankRows.filter(d => {
+    const pid = String(d.pid).toLowerCase();
+    const name = String(d.name || "").toLowerCase();
+    return pid.includes(q) || name.includes(q);
+  });
+}
+
 function computeRanking(){
   const endStr = document.getElementById("rankEnd").value;
   const end = endStr ? new Date(endStr + "T00:00:00") : new Date();
   const start = new Date(end);
   start.setFullYear(end.getFullYear() - 3);
 
-  // include players who have ANY match within [start, end]
   const active = new Set();
   for (const r of rawRows){
     if (r.elo == null) continue;
@@ -381,17 +448,20 @@ function computeRanking(){
   const rows = [];
   const countryVal = document.getElementById("rankCountry").value.trim().toUpperCase();
   const country = countryVal === "" ? null : countryVal;
-  
+
   for (const pid of active){
     if (country !== null){
       const pays = getPaysForLeaderboard(pid);
       if (pays !== country) continue;
     }
+
     const pts = dataByPlayer.get(pid);
     if (!pts || pts.length === 0) continue;
+
     const res = getEloAt(pts, end);
     if (!res) continue;
-    const score = Math.pow(2, (res.elo - 1040) / 120) / 10.83;
+
+    const score = Math.pow(2, (res.elo - 1040) / 120) / 12;
     rows.push({
       pid,
       name: getNameForLeaderboard(pid),
@@ -403,36 +473,22 @@ function computeRanking(){
   }
 
   rows.sort((a,b)=> b.elo - a.elo);
+
   rankRows = rows.map((d, i) => ({ ...d, globalRank: i + 1 }));
   rankWindowStart = start;
-  rankWindowEnd = end;;
-  
-  // ===== 計算總戰力 =====
+  rankWindowEnd = end;
+
   const top = rankRows.slice(0, 82);
-  
   let power = 0;
   for (const r of top){
-    const score = Math.pow(2, (r.elo - 1040) / 120) / 10.83;
-    power += score;
+    power += r.score;
   }
-  
-  document.getElementById("countryPower").textContent =
-    power.toFixed(2);
-  // =====================
-  
-  currentPage = 1;
-  renderRanking(start, end);
-}
-function getFilteredRankRows(){
-  const q = (document.getElementById("rankSearch")?.value || "").trim().toLowerCase();
-  if (!q) return rankRows;
+  document.getElementById("countryPower").textContent = power.toFixed(2);
 
-  return rankRows.filter(d => {
-    const pid = String(d.pid).toLowerCase();
-    const name = String(d.name || "").toLowerCase();
-    return pid.includes(q) || name.includes(q);
-  });
+  currentPage = 1;
+  renderRanking();
 }
+
 function renderRanking(start = rankWindowStart, end = rankWindowEnd){
   const wrap = document.getElementById("rankTableWrap");
 
@@ -490,6 +546,10 @@ function renderRanking(start = rankWindowStart, end = rankWindowEnd){
 }
 
 document.getElementById("rankEnd").addEventListener("change", computeRanking);
+document.getElementById("rankSearch").addEventListener("input", ()=>{
+  currentPage = 1;
+  renderRanking();
+});
 document.getElementById("rankCountry").addEventListener("input", computeRanking);
 document.getElementById("prevPageBtn").addEventListener("click", ()=>{
   currentPage--;
@@ -497,10 +557,6 @@ document.getElementById("prevPageBtn").addEventListener("click", ()=>{
 });
 document.getElementById("nextPageBtn").addEventListener("click", ()=>{
   currentPage++;
-  renderRanking();
-});
-document.getElementById("rankSearch").addEventListener("input", ()=>{
-  currentPage = 1;
   renderRanking();
 });
 
@@ -529,8 +585,7 @@ Promise.all([
     dataByPlayer.set(pid, arr.map(d=>({date:d.date, elo:d.elo})));
   }
 
-  // default players = ever top by date (AFTER interpolation)
-  const bestByDate = new Map(); // YYYY-MM-DD -> {pid, elo}
+  const bestByDate = new Map();
   const fmt = d3.timeFormat("%Y-%m-%d");
 
   for (const [pid, pts] of dataByPlayer.entries()){
@@ -547,14 +602,13 @@ Promise.all([
   }
 
   selectedPlayers = new Set([...bestByDate.values()].map(d => d.pid));
-  selectedPlayers.add("13841"); // force include
+  selectedPlayers.add("13841");
 
   renderChips();
   draw();
-
   computeRanking();
 }).catch(err => {
-  alert("讀取失敗：請確認以下檔案與 index.html 在同資料夾：\n- whr_output.csv\n- roster.json（可選）\n- joueurs.txt（必要，排行榜只看它）\n\n" + err);
+  alert("讀取失敗：請確認以下檔案與 index.html 在同資料夾：\n- whr_output.csv\n- roster.json（可選）\n- joueurs.txt（必要）\n\n" + err);
 });
 </script>
 </body>
