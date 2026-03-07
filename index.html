@@ -112,6 +112,7 @@ let currentPage = 1;
 const PAGE_SIZE = 100;
 let rankWindowStart = null;
 let rankWindowEnd = null;
+let allTop82BasePower = 0; // 「全部」前82名原始戰力總和
 
 const width = 1200;
 const height = 560;
@@ -461,25 +462,21 @@ function computeRanking(){
     active.add(r.player_id);
   }
 
-  const rows = [];
   const countryVal = document.getElementById("rankCountry").value.trim().toUpperCase();
   const country = countryVal === "" ? null : countryVal;
 
+  // 先建立「全部」的排行榜資料，用來算全體前82名原始戰力總和
+  const allRows = [];
   for (const pid of active){
-    if (country !== null){
-      const pays = getPaysForLeaderboard(pid);
-      if (pays !== country) continue;
-    }
-
     const pts = dataByPlayer.get(pid);
     if (!pts || pts.length === 0) continue;
 
     const res = getEloAt(pts, end);
     if (!res) continue;
 
-    const basePower = Math.pow(2, (res.elo - 1040) / 120);
+    const basePower = Math.pow(2, (res.elo - 1040) / 120) / 10.83;
 
-    rows.push({
+    allRows.push({
       pid,
       name: getNameForLeaderboard(pid),
       pays: getPaysForLeaderboard(pid),
@@ -489,24 +486,40 @@ function computeRanking(){
     });
   }
 
-  rows.sort((a,b)=> b.elo - a.elo);
+  allRows.sort((a,b)=> b.elo - a.elo);
 
-  // 先計算並儲存所有選手總戰力
-  const totalPower = rows.reduce((sum, r) => sum + r.basePower, 0);
+  // 「全部」前82名原始戰力總和
+  allTop82BasePower = allRows
+    .slice(0, 82)
+    .reduce((sum, r) => sum + r.basePower, 0);
 
-  // 再換算成相對戰力
+  // 再依 Country 篩選出目前要顯示的 rows
+  const rows = allRows.filter(r => {
+    if (country === null) return true;
+    return r.pays === country;
+  });
+
+  // 顯示相對戰力：用「全部」前82名原始戰力總和」當分母
   rankRows = rows.map((d, i) => ({
     ...d,
-    score: totalPower > 0 ? d.basePower / 10.83 * 8192 / totalPower : 0,
+    score: allTop82BasePower > 0 ? d.basePower * 8192 / allTop82BasePower : 0,
     globalRank: i + 1
   }));
 
   rankWindowStart = start;
   rankWindowEnd = end;
 
-  // Country 總戰力仍用前 82 名的相對戰力加總
-  const top = rankRows.slice(0, 82);
-  const power = top.reduce((sum, r) => sum + r.score, 0);
+  // 顯示的總戰力：
+  // 全部 -> 前82名原始戰力總和
+  // 個別國家 -> 該國前82名相對戰力總和
+  let power = 0;
+  if (country === null){
+    power = allTop82BasePower;
+  } else {
+    power = rankRows
+      .slice(0, 82)
+      .reduce((sum, r) => sum + r.score, 0);
+  }
 
   document.getElementById("countryPower").textContent = power.toFixed(2);
 
