@@ -477,7 +477,7 @@ function computeRanking(){
     const res = getEloAt(pts, end);
     if (!res) continue;
 
-    const score = Math.pow(2, (res.elo - 1040) / 120) / 12;
+    const score = Math.pow(2, (res.elo - 1040) / 120) / 10.83;
     rows.push({
       pid,
       name: getNameForLeaderboard(pid),
