@@ -477,28 +477,37 @@ function computeRanking(){
     const res = getEloAt(pts, end);
     if (!res) continue;
 
-    const score = Math.pow(2, (res.elo - 1040) / 120) / 10.83;
+    const basePower = Math.pow(2, (res.elo - 1040) / 120);
+
     rows.push({
       pid,
       name: getNameForLeaderboard(pid),
       pays: getPaysForLeaderboard(pid),
       elo: res.elo,
-      score,
+      basePower,
       dateUsed: res.dateUsed
     });
   }
 
   rows.sort((a,b)=> b.elo - a.elo);
 
-  rankRows = rows.map((d, i) => ({ ...d, globalRank: i + 1 }));
+  // 先計算並儲存所有選手總戰力
+  const totalPower = rows.reduce((sum, r) => sum + r.basePower, 0);
+
+  // 再換算成相對戰力
+  rankRows = rows.map((d, i) => ({
+    ...d,
+    score: totalPower > 0 ? d.basePower / 10.83 * 8192 / totalPower : 0,
+    globalRank: i + 1
+  }));
+
   rankWindowStart = start;
   rankWindowEnd = end;
 
+  // Country 總戰力仍用前 82 名的相對戰力加總
   const top = rankRows.slice(0, 82);
-  let power = 0;
-  for (const r of top){
-    power += r.score;
-  }
+  const power = top.reduce((sum, r) => sum + r.score, 0);
+
   document.getElementById("countryPower").textContent = power.toFixed(2);
 
   currentPage = 1;
@@ -541,7 +550,7 @@ function renderRanking(start = rankWindowStart, end = rankWindowEnd){
           <th>選手</th>
           <th style="width:80px">pays</th>
           <th style="width:120px">Elo</th>
-          <th style="width:120px">戰力</th>
+          <th style="width:120px">相對戰力</th>
           <th style="width:120px">取值日期</th>
         </tr>
       </thead>
