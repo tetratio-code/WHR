@@ -465,7 +465,7 @@ function computeRanking(){
   const countryVal = document.getElementById("rankCountry").value.trim().toUpperCase();
   const country = countryVal === "" ? null : countryVal;
 
-  // 先建立「全部」的排行榜資料，用來算全體前82名原始戰力總和
+  // 先建立「全部」排行榜資料
   const allRows = [];
   for (const pid of active){
     const pts = dataByPlayer.get(pid);
@@ -486,35 +486,51 @@ function computeRanking(){
     });
   }
 
+  // 全域 Elo 排序
   allRows.sort((a,b)=> b.elo - a.elo);
 
-  // 「全部」前82名原始戰力總和
-  allTop82BasePower = allRows
-    .slice(0, 82)
-    .reduce((sum, r) => sum + r.basePower, 0);
+  // 先建立全域排名（之後 country / 搜尋 都沿用）
+  const allRowsWithRank = allRows.map((d, i) => ({
+    ...d,
+    globalRank: i + 1
+  }));
 
-  // 再依 Country 篩選出目前要顯示的 rows
-  const rows = allRows.filter(r => {
+  // 「全部」總戰力改為：各國前5名原始戰力相加
+  const rowsByPays = new Map();
+  for (const r of allRowsWithRank){
+    const pays = r.pays || "(NONE)";
+    if (!rowsByPays.has(pays)) rowsByPays.set(pays, []);
+    rowsByPays.get(pays).push(r);
+  }
+
+  let allCountryTop5BasePower = 0;
+  for (const arr of rowsByPays.values()){
+    // arr 已經跟著 allRowsWithRank 維持 Elo 由高到低
+    const top5 = arr.slice(0, 5);
+    allCountryTop5BasePower += top5.reduce((sum, r) => sum + r.basePower, 0);
+  }
+
+  // 依 Country 篩選目前顯示資料
+  const rows = allRowsWithRank.filter(r => {
     if (country === null) return true;
     return r.pays === country;
   });
 
-  // 顯示相對戰力：用「全部」前82名原始戰力總和」當分母
-  rankRows = rows.map((d, i) => ({
+  // 相對戰力：用「全部」各國前5名原始戰力總和 當分母
+  rankRows = rows.map(d => ({
     ...d,
-    score: allTop82BasePower > 0 ? d.basePower * 8192 / allTop82BasePower : 0,
-    globalRank: i + 1
+    score: allCountryTop5BasePower > 0 ? d.basePower * 8192 / allCountryTop5BasePower : 0
   }));
 
   rankWindowStart = start;
   rankWindowEnd = end;
 
   // 顯示的總戰力：
-  // 全部 -> 前82名原始戰力總和
+  // 全部 -> 各國前5名原始戰力總和
   // 個別國家 -> 該國前82名相對戰力總和
   let power = 0;
   if (country === null){
-    power = allTop82BasePower;
+    power = allCountryTop5BasePower;
   } else {
     power = rankRows
       .slice(0, 82)
