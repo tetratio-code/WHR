@@ -238,8 +238,8 @@ function draw(){
   const singlePlayerMode = (players.length === 1);
   const globalRankCache = new Map();
 
-  // 單一選手模式用的垂直線與 overlay
   let hoverLine = null;
+  let hoverDot = null;
   let hoverOverlay = null;
 
   if (singlePlayerMode){
@@ -249,6 +249,13 @@ function draw(){
       .attr("stroke-dasharray", "4,4")
       .attr("y1", 0)
       .attr("y2", innerH)
+      .style("display", "none");
+
+    hoverDot = plot.append("circle")
+      .attr("r", 4)
+      .attr("fill", "#111")
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 1.5)
       .style("display", "none");
 
     hoverOverlay = plot.append("rect")
@@ -275,7 +282,6 @@ function draw(){
 
     if (date < first) return null;
 
-    // 晚於最後一場，但只保留 3 年
     if (date >= last){
       if (date <= lastPlus3Y){
         return series[series.length - 1].elo;
@@ -301,8 +307,6 @@ function draw(){
       if (!pts || pts.length === 0) continue;
 
       const res = getEloAt(pts, date);
-
-      // 套用「最後一場後只保留 3 年」規則
       if (!res || res.elo == null || Number.isNaN(res.elo)) continue;
 
       const last = pts[pts.length - 1].date;
@@ -335,18 +339,29 @@ function draw(){
     return result;
   }
 
+  function resetSeriesOpacity(){
+    plot.selectAll(".player-line").attr("opacity", 1);
+  }
+
+  function dimOtherSeries(activePid){
+    plot.selectAll(".player-line")
+      .attr("opacity", d => d === activePid ? 1 : 0.18);
+  }
+
   for (const p of players){
     const series = seriesByPlayer.get(p);
     if (!series) continue;
 
     plot.append("path")
       .datum(series)
+      .attr("class", "player-line")
+      .attr("data-pid", p)
       .attr("fill","none")
       .attr("stroke", color(p))
       .attr("stroke-width", 1.8)
+      .attr("opacity", 1)
       .attr("d", line);
 
-    // 多於一名選手時，才用 path hover
     if (!singlePlayerMode){
       plot.append("path")
         .datum(series)
@@ -356,12 +371,20 @@ function draw(){
         .attr("d", line)
         .style("cursor","crosshair")
         .style("pointer-events","stroke")
+        .on("mouseenter", () => {
+          dimOtherSeries(p);
+        })
         .on("mousemove", (event) => {
+          dimOtherSeries(p);
+
           const [mx] = d3.pointer(event, plot.node());
           const date = d3.timeDay.floor(xScale.invert(mx));
 
           const eloHere = eloAtDateFromSeriesWith3Y(series, date);
-          if (eloHere == null) { tooltip.style("opacity", 0); return; }
+          if (eloHere == null) {
+            tooltip.style("opacity", 0);
+            return;
+          }
 
           const name = getNameForChart(p);
           tooltip.style("opacity", 1)
@@ -384,11 +407,13 @@ function draw(){
 
           tooltip.style("left", x + "px").style("top", y + "px");
         })
-        .on("mouseleave", () => tooltip.style("opacity", 0));
+        .on("mouseleave", () => {
+          tooltip.style("opacity", 0);
+          resetSeriesOpacity();
+        });
     }
   }
 
-  // 單一選手模式：hover 圖上任一位置
   if (singlePlayerMode){
     const p = players[0];
     const series = seriesByPlayer.get(p);
@@ -403,6 +428,7 @@ function draw(){
         if (eloHere == null){
           tooltip.style("opacity", 0);
           hoverLine.style("display", "none");
+          hoverDot.style("display", "none");
           return;
         }
 
@@ -410,10 +436,18 @@ function draw(){
         const rank = rankMap.get(p);
         const name = getNameForChart(p);
 
+        const px = xScale(date);
+        const py = yScale(eloHere);
+
         hoverLine
           .style("display", null)
-          .attr("x1", xScale(date))
-          .attr("x2", xScale(date));
+          .attr("x1", px)
+          .attr("x2", px);
+
+        hoverDot
+          .style("display", null)
+          .attr("cx", px)
+          .attr("cy", py);
 
         tooltip.style("opacity", 1)
           .html(`
@@ -439,6 +473,7 @@ function draw(){
       .on("mouseleave", () => {
         tooltip.style("opacity", 0);
         hoverLine.style("display", "none");
+        hoverDot.style("display", "none");
       });
   }
 }
