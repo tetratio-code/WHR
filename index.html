@@ -234,8 +234,9 @@ function draw(){
     .x(d => xScale(d.date))
     .y(d => yScale(d.elo));
 
-  // hover 時計算當天名次，只算目前顯示的選手
-  const rankCache = new Map();
+  // 只在單一選手時，hover 時計算「與所有選手」的名次
+  const singlePlayerMode = (players.length === 1);
+  const globalRankCache = new Map();
 
   function eloAtDateFromSeries(series, date){
     if (!series || series.length === 0) return null;
@@ -254,18 +255,19 @@ function draw(){
     return null;
   }
 
-  function getRanksForDate(date){
-    const idsSorted = [...players].sort((a,b)=>Number(a)-Number(b));
-    const key = `${d3.timeFormat("%Y-%m-%d")(date)}|${idsSorted.join(",")}`;
-    const cached = rankCache.get(key);
+  function getGlobalRanksForDate(date){
+    const key = d3.timeFormat("%Y-%m-%d")(date);
+    const cached = globalRankCache.get(key);
     if (cached) return cached;
 
     const vals = [];
-    for (const pid of players){
-      const s = seriesByPlayer.get(pid);
-      const elo = eloAtDateFromSeries(s, date);
-      if (elo == null || Number.isNaN(elo)) continue;
-      vals.push({ pid, elo });
+    for (const [pid, pts] of dataByPlayer.entries()){
+      if (!pts || pts.length === 0) continue;
+
+      const res = getEloAt(pts, date);
+      if (!res || res.elo == null || Number.isNaN(res.elo)) continue;
+
+      vals.push({ pid, elo: res.elo });
     }
 
     vals.sort((a,b)=>b.elo - a.elo);
@@ -287,7 +289,7 @@ function draw(){
     }
 
     const result = { rankMap, total: vals.length };
-    rankCache.set(key, result);
+    globalRankCache.set(key, result);
     return result;
   }
 
@@ -317,17 +319,22 @@ function draw(){
         const eloHere = eloAtDateFromSeries(series, date);
         if (eloHere == null) { tooltip.style("opacity", 0); return; }
 
-        const { rankMap, total } = getRanksForDate(date);
-        const rank = rankMap.get(p);
-
         const name = getNameForChart(p);
-        tooltip.style("opacity", 1)
-          .html(`
-            <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
-            <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(date)}</div>
-            <div><b>Elo</b>：${eloHere.toFixed(3)}</div>
-            <div><b>名次</b>：${rank ? `${rank}/${total}` : `—/${total}`}</div>
-          `);
+
+        let tooltipHtml = `
+          <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
+          <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(date)}</div>
+          <div><b>Elo</b>：${eloHere.toFixed(3)}</div>
+        `;
+
+        // 只有單一選手時，才顯示「與所有選手」的名次
+        if (singlePlayerMode){
+          const { rankMap, total } = getGlobalRanksForDate(date);
+          const rank = rankMap.get(p);
+          tooltipHtml += `<div><b>名次</b>：${rank ? `${rank}/${total}` : `—/${total}`}</div>`;
+        }
+
+        tooltip.style("opacity", 1).html(tooltipHtml);
 
         const chartRect = document.getElementById("chart").getBoundingClientRect();
         const tipNode = tooltip.node();
