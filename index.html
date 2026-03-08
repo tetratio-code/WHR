@@ -58,6 +58,7 @@
   <div class="row">
     <input id="playerInput" placeholder="輸入選手編號" />
     <button id="addBtn" type="button">加入折線</button>
+    <button id="clearBtn" type="button">清除全部</button>
     <span class="muted">資料：<code>whr_output.csv</code>（date, player_id, elo；日期缺漏會線性內插成逐日資料）</span>
   </div>
 
@@ -209,6 +210,7 @@ function draw(){
 
   const seriesByPlayer = new Map();
   const all = [];
+
   for (const p of players){
     const pts = dataByPlayer.get(p) || [];
     if (pts.length < 2) continue;
@@ -234,18 +236,53 @@ function draw(){
     .x(d => xScale(d.date))
     .y(d => yScale(d.elo));
 
-  // 只在單一選手時，hover 時計算「與所有選手」的名次
   const singlePlayerMode = (players.length === 1);
   const globalRankCache = new Map();
 
-  function eloAtDateFromSeries(series, date){
+  // 單一選手模式用的垂直線與 overlay
+  let hoverLine = null;
+  let hoverOverlay = null;
+
+  if (singlePlayerMode){
+    hoverLine = plot.append("line")
+      .attr("stroke", "#888")
+      .attr("stroke-width", 1)
+      .attr("stroke-dasharray", "4,4")
+      .attr("y1", 0)
+      .attr("y2", innerH)
+      .style("display", "none");
+
+    hoverOverlay = plot.append("rect")
+      .attr("x", 0)
+      .attr("y", 0)
+      .attr("width", innerW)
+      .attr("height", innerH)
+      .attr("fill", "transparent")
+      .style("pointer-events", "all");
+  }
+
+  function addYears(date, years){
+    const d = new Date(date);
+    d.setFullYear(d.getFullYear() + years);
+    return d;
+  }
+
+  function eloAtDateFromSeriesWith3Y(series, date){
     if (!series || series.length === 0) return null;
 
     const first = series[0].date;
     const last  = series[series.length - 1].date;
+    const lastPlus3Y = addYears(last, 3);
 
     if (date < first) return null;
-    if (date >= last) return series[series.length - 1].elo;
+
+    // 晚於最後一場，但只保留 3 年
+    if (date >= last){
+      if (date <= lastPlus3Y){
+        return series[series.length - 1].elo;
+      }
+      return null;
+    }
 
     const bisect = d3.bisector(d=>d.date).left;
     const idx = bisect(series, date);
@@ -265,7 +302,13 @@ function draw(){
       if (!pts || pts.length === 0) continue;
 
       const res = getEloAt(pts, date);
+
+      // 套用「最後一場後只保留 3 年」規則
       if (!res || res.elo == null || Number.isNaN(res.elo)) continue;
+
+      const last = pts[pts.length - 1].date;
+      const lastPlus3Y = addYears(last, 3);
+      if (date > lastPlus3Y) continue;
 
       vals.push({ pid, elo: res.elo });
     }
@@ -304,37 +347,82 @@ function draw(){
       .attr("stroke-width", 1.8)
       .attr("d", line);
 
-    plot.append("path")
-      .datum(series)
-      .attr("fill","none")
-      .attr("stroke","transparent")
-      .attr("stroke-width", 10)
-      .attr("d", line)
-      .style("cursor","crosshair")
-      .style("pointer-events","stroke")
+    // 多於一名選手時，才用 path hover
+    if (!singlePlayerMode){
+      plot.append("path")
+        .datum(series)
+        .attr("fill","none")
+        .attr("stroke","transparent")
+        .attr("stroke-width", 10)
+        .attr("d", line)
+        .style("cursor","crosshair")
+        .style("pointer-events","stroke")
+        .on("mousemove", (event) => {
+          const [mx] = d3.pointer(event, plot.node());
+          const date = d3.timeDay.floor(xScale.invert(mx));
+
+          const eloHere = eloAtDateFromSeriesWith3Y(series, date);
+          if (eloHere == null) { tooltip.style("opacity", 0); return; }
+
+          const name = getNameForChart(p);
+          tooltip.style("opacity", 1)
+            .html(`
+              <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
+              <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(date)}</div>
+              <div><b>Elo</b>：${eloHere.toFixed(3)}</div>
+            `);
+
+          const chartRect = document.getElementById("chart").getBoundingClientRect();
+          const tipNode = tooltip.node();
+          const tipW = tipNode.offsetWidth;
+          const tipH = tipNode.offsetHeight;
+
+          let x = event.clientX - chartRect.left + 12;
+          let y = event.clientY - chartRect.top  + 12;
+
+          x = Math.min(x, chartRect.width  - tipW - 8);
+          y = Math.min(y, chartRect.height - tipH - 8);
+
+          tooltip.style("left", x + "px").style("top", y + "px");
+        })
+        .on("mouseleave", () => tooltip.style("opacity", 0));
+    }
+  }
+
+  // 單一選手模式：hover 圖上任一位置
+  if (singlePlayerMode){
+    const p = players[0];
+    const series = seriesByPlayer.get(p);
+
+    hoverOverlay
+      .style("cursor", "crosshair")
       .on("mousemove", (event) => {
         const [mx] = d3.pointer(event, plot.node());
         const date = d3.timeDay.floor(xScale.invert(mx));
 
-        const eloHere = eloAtDateFromSeries(series, date);
-        if (eloHere == null) { tooltip.style("opacity", 0); return; }
-
-        const name = getNameForChart(p);
-
-        let tooltipHtml = `
-          <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
-          <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(date)}</div>
-          <div><b>Elo</b>：${eloHere.toFixed(3)}</div>
-        `;
-
-        // 只有單一選手時，才顯示「與所有選手」的名次
-        if (singlePlayerMode){
-          const { rankMap, total } = getGlobalRanksForDate(date);
-          const rank = rankMap.get(p);
-          tooltipHtml += `<div><b>名次</b>：${rank ? `${rank}/${total}` : `—/${total}`}</div>`;
+        const eloHere = eloAtDateFromSeriesWith3Y(series, date);
+        if (eloHere == null){
+          tooltip.style("opacity", 0);
+          hoverLine.style("display", "none");
+          return;
         }
 
-        tooltip.style("opacity", 1).html(tooltipHtml);
+        const { rankMap, total } = getGlobalRanksForDate(date);
+        const rank = rankMap.get(p);
+        const name = getNameForChart(p);
+
+        hoverLine
+          .style("display", null)
+          .attr("x1", xScale(date))
+          .attr("x2", xScale(date));
+
+        tooltip.style("opacity", 1)
+          .html(`
+            <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
+            <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(date)}</div>
+            <div><b>Elo</b>：${eloHere.toFixed(3)}</div>
+            <div><b>名次</b>：${rank ? `${rank}/${total}` : `—/${total}`}</div>
+          `);
 
         const chartRect = document.getElementById("chart").getBoundingClientRect();
         const tipNode = tooltip.node();
@@ -349,7 +437,10 @@ function draw(){
 
         tooltip.style("left", x + "px").style("top", y + "px");
       })
-      .on("mouseleave", () => tooltip.style("opacity", 0));
+      .on("mouseleave", () => {
+        tooltip.style("opacity", 0);
+        hoverLine.style("display", "none");
+      });
   }
 }
 
@@ -369,6 +460,11 @@ function addPlayer(){
 
 document.getElementById("addBtn").addEventListener("click", addPlayer);
 document.getElementById("playerInput").addEventListener("keydown", (e)=>{ if(e.key==="Enter") addPlayer(); });
+document.getElementById("clearBtn").addEventListener("click", ()=>{
+  selectedPlayers.clear();
+  renderChips();
+  draw();
+});
 
 function parseJoueurs(text){
   // 依 joueurs.txt 的 pays = XXX 分組解析
