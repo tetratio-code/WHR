@@ -342,10 +342,10 @@ function draw(){
   function resetSeriesOpacity(){
     plot.selectAll(".player-line").attr("opacity", 1);
   }
-
+  
   function dimOtherSeries(activePid){
     plot.selectAll(".player-line")
-      .attr("opacity", d => d === activePid ? 1 : 0.18);
+      .attr("opacity", d => d === activePid ? 1 : 0.28);
   }
 
   for (const p of players){
@@ -353,14 +353,14 @@ function draw(){
     if (!series) continue;
 
     plot.append("path")
-      .datum(series)
+      .datum(p)
       .attr("class", "player-line")
       .attr("data-pid", p)
-      .attr("fill","none")
+      .attr("fill", "none")
       .attr("stroke", color(p))
       .attr("stroke-width", 1.8)
       .attr("opacity", 1)
-      .attr("d", line);
+      .attr("d", () => line(series));
 
     if (!singlePlayerMode){
       plot.append("path")
