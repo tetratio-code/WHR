@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Elo rating (WHR)</title>
+<title>Othello Elo rating (WHR)</title>
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 
 <style>
@@ -592,24 +592,29 @@ function computeRanking(){
   const start = new Date(end);
   start.setFullYear(end.getFullYear() - 3);
 
-  const active = new Set();
-  for (const r of rawRows){
-    if (r.elo == null) continue;
-    if (r.date < start || r.date > end) continue;
-    active.add(r.player_id);
-  }
-
   const countryVal = document.getElementById("rankCountry").value.trim().toUpperCase();
   const country = countryVal === "" ? null : countryVal;
 
+  function addYears(date, years){
+    const d = new Date(date);
+    d.setFullYear(d.getFullYear() + years);
+    return d;
+  }
+
   // 先建立「全部」排行榜資料
   const allRows = [];
-  for (const pid of active){
-    const pts = dataByPlayer.get(pid);
+  for (const [pid, pts] of dataByPlayer.entries()){
     if (!pts || pts.length === 0) continue;
 
     const res = getEloAt(pts, end);
-    if (!res) continue;
+    if (!res || res.elo == null || Number.isNaN(res.elo)) continue;
+
+    // 與折線圖一致：
+    // 1. end 早於第一場 => getEloAt 已經回傳 null，不會進來
+    // 2. end 晚於最後一場，只保留 3 年
+    const last = pts[pts.length - 1].date;
+    const lastPlus3Y = addYears(last, 3);
+    if (end > lastPlus3Y) continue;
 
     const basePower = Math.pow(2, (res.elo - 1040) / 120) / 10.83;
 
@@ -626,13 +631,13 @@ function computeRanking(){
   // 全域 Elo 排序
   allRows.sort((a,b)=> b.elo - a.elo);
 
-  // 先建立全域排名（之後 country / 搜尋 都沿用）
+  // 全域排名
   const allRowsWithRank = allRows.map((d, i) => ({
     ...d,
     globalRank: i + 1
   }));
 
-  // 「全部」總戰力改為：各國前5名原始戰力相加
+  // 「全部」總戰力：各國前5名原始戰力相加
   const rowsByPays = new Map();
   for (const r of allRowsWithRank){
     const pays = r.pays || "(NONE)";
@@ -642,18 +647,17 @@ function computeRanking(){
 
   let allCountryTop5BasePower = 0;
   for (const arr of rowsByPays.values()){
-    // arr 已經跟著 allRowsWithRank 維持 Elo 由高到低
     const top5 = arr.slice(0, 5);
     allCountryTop5BasePower += top5.reduce((sum, r) => sum + r.basePower, 0);
   }
 
-  // 依 Country 篩選目前顯示資料
+  // Country 篩選
   const rows = allRowsWithRank.filter(r => {
     if (country === null) return true;
     return r.pays === country;
   });
 
-  // 相對戰力：用「全部」各國前5名原始戰力總和 當分母
+  // 相對戰力：用「全部」各國前5名原始戰力總和當分母
   rankRows = rows.map(d => ({
     ...d,
     score: allCountryTop5BasePower > 0 ? d.basePower * 8192 / allCountryTop5BasePower : 0
@@ -662,7 +666,7 @@ function computeRanking(){
   rankWindowStart = start;
   rankWindowEnd = end;
 
-  // 顯示的總戰力：
+  // 顯示總戰力：
   // 全部 -> 各國前5名原始戰力總和
   // 個別國家 -> 該國前82名相對戰力總和
   let power = 0;
