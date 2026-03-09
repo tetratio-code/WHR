@@ -574,7 +574,9 @@ function populateCountrySelect(){
 
   const paysList = [...paysSet].sort();
 
-  select.innerHTML = `<option value="">全部</option>` +
+  select.innerHTML =
+    `<option value="">全部</option>` +
+    `<option value="NON_JPN">非日本</option>` +
     paysList.map(p => `<option value="${p}">${p}</option>`).join("");
 }
 
@@ -683,6 +685,7 @@ function computeRanking(){
   // Country 篩選
   const rows = allRowsWithRank.filter(r => {
     if (country === null) return true;
+    if (country === "NON_JPN") return r.pays !== "JPN";
     return r.pays === country;
   });
 
