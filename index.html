@@ -297,47 +297,73 @@ function draw(){
     return null;
   }
 
-  function getGlobalRanksForDate(date){
-    const key = d3.timeFormat("%Y-%m-%d")(date);
-    const cached = globalRankCache.get(key);
-    if (cached) return cached;
+function getGlobalRanksForDate(date){
+  const key = d3.timeFormat("%Y-%m-%d")(date);
+  const cached = globalRankCache.get(key);
+  if (cached) return cached;
 
-    const vals = [];
-    for (const [pid, pts] of dataByPlayer.entries()){
-      if (!pts || pts.length === 0) continue;
+  const vals = [];
+  for (const [pid, pts] of dataByPlayer.entries()){
+    if (!pts || pts.length === 0) continue;
 
-      const res = getEloAt(pts, date);
-      if (!res || res.elo == null || Number.isNaN(res.elo)) continue;
+    const res = getEloAt(pts, date);
+    if (!res || res.elo == null || Number.isNaN(res.elo)) continue;
 
-      const last = pts[pts.length - 1].date;
-      const lastPlus3Y = addYears(last, 3);
-      if (date > lastPlus3Y) continue;
+    const last = pts[pts.length - 1].date;
+    const lastPlus3Y = addYears(last, 3);
+    if (date > lastPlus3Y) continue;
 
-      vals.push({ pid, elo: res.elo });
-    }
-
-    vals.sort((a,b)=>b.elo - a.elo);
-
-    const rankMap = new Map();
-    let prevElo = null;
-    let prevRank = 0;
-    for (let i=0;i<vals.length;i++){
-      const v = vals[i];
-      let rank;
-      if (prevElo !== null && v.elo === prevElo){
-        rank = prevRank;
-      } else {
-        rank = i + 1;
-      }
-      rankMap.set(v.pid, rank);
-      prevElo = v.elo;
-      prevRank = rank;
-    }
-
-    const result = { rankMap, total: vals.length };
-    globalRankCache.set(key, result);
-    return result;
+    vals.push({
+      pid,
+      pays: getPaysForLeaderboard(pid) || "(NONE)",
+      elo: res.elo,
+      basePower: Math.pow(2, (res.elo - 1040) / 120) / 10.83
+    });
   }
+
+  vals.sort((a,b)=>b.elo - a.elo);
+
+  // 名次
+  const rankMap = new Map();
+  let prevElo = null;
+  let prevRank = 0;
+  for (let i=0;i<vals.length;i++){
+    const v = vals[i];
+    let rank;
+    if (prevElo !== null && v.elo === prevElo){
+      rank = prevRank;
+    } else {
+      rank = i + 1;
+    }
+    rankMap.set(v.pid, rank);
+    prevElo = v.elo;
+    prevRank = rank;
+  }
+
+  // 與排行榜一致：用「全部」各國前5名原始戰力總和」當分母
+  const rowsByPays = new Map();
+  for (const v of vals){
+    if (!rowsByPays.has(v.pays)) rowsByPays.set(v.pays, []);
+    rowsByPays.get(v.pays).push(v);
+  }
+
+  let allCountryTop5BasePower = 0;
+  for (const arr of rowsByPays.values()){
+    const top5 = arr.slice(0, 5);
+    allCountryTop5BasePower += top5.reduce((sum, r) => sum + r.basePower, 0);
+  }
+
+  const basePowerMap = new Map(vals.map(v => [v.pid, v.basePower]));
+
+  const result = {
+    rankMap,
+    basePowerMap,
+    denominator: allCountryTop5BasePower,
+    total: vals.length
+  };
+  globalRankCache.set(key, result);
+  return result;
+}
 
   function resetSeriesOpacity(){
     plot.selectAll(".player-line").attr("opacity", 1);
@@ -432,29 +458,32 @@ function draw(){
           return;
         }
 
-        const { rankMap, total } = getGlobalRanksForDate(date);
+        const { rankMap, basePowerMap, denominator, total } = getGlobalRanksForDate(date);
         const rank = rankMap.get(p);
+        const basePower = basePowerMap.get(p) || 0;
+        const relativePower = denominator > 0 ? basePower * 8192 / denominator : 0;
         const name = getNameForChart(p);
-
+        
         const px = xScale(date);
         const py = yScale(eloHere);
-
+        
         hoverLine
           .style("display", null)
           .attr("x1", px)
           .attr("x2", px);
-
+        
         hoverDot
           .style("display", null)
           .attr("cx", px)
           .attr("cy", py);
-
+        
         tooltip.style("opacity", 1)
           .html(`
             <div><b>選手</b>：${name ? `${p} (${name})` : p}</div>
             <div><b>日期</b>：${d3.timeFormat("%Y-%m-%d")(date)}</div>
             <div><b>Elo</b>：${eloHere.toFixed(3)}</div>
             <div><b>名次</b>：${rank ? `${rank}/${total}` : `—/${total}`}</div>
+            <div><b>相對戰力</b>：${relativePower.toFixed(2)}</div>
           `);
 
         const chartRect = document.getElementById("chart").getBoundingClientRect();
