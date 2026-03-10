@@ -105,7 +105,10 @@ const EU_COUNTRIES = new Set([
 "FIN","FRA","GBR","GRC","HRV","HUN","IRL","ISL","ITA","LTU",
 "NLD","NOR","POL","ROU","RUS","SRB","SVK","SWE","TUR","UKR"
 ]);
-
+const ASIA_COUNTRIES = new Set([
+"AUS","CHN","HKG","IDN","IND","IRN","ISR",
+"KAZ","PHL","SGP","THA","TWN"
+]);
 let selectedPlayers = new Set();
 let rosterMap = new Map();         // chart labels priority
 let joueursMap = new Map();        // id -> {name, pays}
@@ -583,6 +586,7 @@ function populateCountrySelect(){
     `<option value="">全部</option>` +
     `<option value="NON_JPN">非日本</option>` +
     `<option value="EUROPE">歐洲</option>` +
+    `<option value="ASIA">亞洲</option>` +
     paysList.map(p => `<option value="${p}">${p}</option>`).join("");
 }
 
@@ -690,16 +694,15 @@ function computeRanking(){
 
   // Country 篩選
   const rows = allRowsWithRank.filter(r => {
-  
+
     if (country === null)
       return true;
-  
     if (country === "NON_JPN")
       return r.pays !== "JPN";
-  
     if (country === "EUROPE")
       return EU_COUNTRIES.has(r.pays);
-  
+    if (country === "ASIA")
+      return ASIA_COUNTRIES.has(r.pays);
     return r.pays === country;
   });
 
