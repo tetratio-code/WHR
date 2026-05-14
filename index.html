@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -59,7 +60,7 @@
     <input id="playerInput" placeholder="輸入選手編號" />
     <button id="addBtn" type="button">加入折線</button>
     <button id="clearBtn" type="button">清除全部</button>
-    <span class="muted">資料：<code>whr_output.csv</code>（date, player_id, elo；日期缺漏會線性內插成逐日資料）</span>
+    <span class="muted">資料：<code>whr_output.csv</code>（date, player_id, elo）</span>
   </div>
 
   <div class="muted" style="margin-top:8px">目前顯示（可移除）：</div>
@@ -596,6 +597,12 @@ function setDefaultRankEnd(){
   document.getElementById("rankEnd").value = today.toISOString().slice(0,10);
 }
 
+function addYears(date, years){
+  const d = new Date(date);
+  d.setFullYear(d.getFullYear() + years);
+  return d;
+}
+
 function getEloAt(points, target){
   const n = points.length;
   if (n === 0) return null;
@@ -614,6 +621,15 @@ function getEloAt(points, target){
   const t = (b.date - a.date) === 0 ? 0 : (target - a.date) / (b.date - a.date);
   const v = a.elo + t * (b.elo - a.elo);
   return { elo: v, dateUsed: target };
+}
+
+function getEloAtWithin3Years(points, target){
+  if (!points || points.length === 0) return null;
+
+  const last = points[points.length - 1].date;
+  if (target > addYears(last, 3)) return null;
+
+  return getEloAt(points, target);
 }
 
 function getFilteredRankRows(){
@@ -833,16 +849,33 @@ Promise.all([
   const bestByDate = new Map();
   const fmt = d3.timeFormat("%Y-%m-%d");
 
-  for (const [pid, pts] of dataByPlayer.entries()){
-    if (!pts || pts.length < 2) continue;
-    const daily = interpolateDaily(pts);
-    for (const d of daily){
-      if (d.elo == null || Number.isNaN(d.elo)) continue;
-      const k = fmt(d.date);
-      const cur = bestByDate.get(k);
-      if (!cur || d.elo > cur.elo){
-        bestByDate.set(k, {pid, elo: d.elo});
+  const allKnownDates = [...new Set(
+    rows
+      .filter(r => r.elo != null && !Number.isNaN(r.elo))
+      .map(r => +d3.timeDay.floor(r.date))
+  )]
+    .sort((a,b) => a-b)
+    .map(t => new Date(t));
+
+  // 自動挑選折線時，與下方排行榜一致：
+  // 選手最後一次參賽後 3 年內，Elo 仍視為有效並可壓過較低分的後來參賽者。
+  // 但真正畫線時仍使用 interpolateDaily(pts)，所以折線只會停在最後一次參賽日。
+  for (const date of allKnownDates){
+    let best = null;
+
+    for (const [pid, pts] of dataByPlayer.entries()){
+      if (!pts || pts.length < 2) continue;
+
+      const res = getEloAtWithin3Years(pts, date);
+      if (!res || res.elo == null || Number.isNaN(res.elo)) continue;
+
+      if (!best || res.elo > best.elo){
+        best = { pid, elo: res.elo };
       }
+    }
+
+    if (best){
+      bestByDate.set(fmt(date), best);
     }
   }
 
